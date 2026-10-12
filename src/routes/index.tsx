@@ -1,24 +1,134 @@
 import { createFileRoute } from "@tanstack/react-router";
+import { useEffect, useRef, useState } from "react";
+import { ImagePlus, Loader2, X } from "lucide-react";
+import { toast } from "sonner";
+import { AppShell, Avatar } from "@/components/AppShell";
+import { PostCard } from "@/components/PostCard";
+import { CommentsSheet } from "@/components/CommentsSheet";
+import { FACULTIES, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
+import { useAuth } from "@/lib/auth";
 
-// No head() here: the home route inherits title/description/og/twitter from
-// __root.tsx, and ships no og:image so serve-time hosting can inject the
-// project's social preview (explicit og:image or latest screenshot).
 export const Route = createFileRoute("/")({
-  component: Index,
+  ssr: false,
+  head: () => ({
+    meta: [
+      { title: "AFUED Community — Campus Feed" },
+      { name: "description", content: "The social feed for AFUED students. Share posts across every faculty channel." },
+      { property: "og:title", content: "AFUED Community — Campus Feed" },
+      { property: "og:description", content: "Share posts and connect across every AFUED faculty." },
+    ],
+  }),
+  component: Feed,
 });
 
-// IMPORTANT: Replace this placeholder. See ./README.md for routing conventions.
-function Index() {
+function Feed() {
+  return <AppShell><FeedInner /></AppShell>;
+}
+
+function FeedInner() {
+  const [channel, setChannel] = useState("All");
+  const [posts, setPosts] = useState<Post[]>([]);
+  const [profiles, setProfiles] = useState<Record<string, Profile>>({});
+  const [counts, setCounts] = useState<Record<string, number>>({});
+  const [loading, setLoading] = useState(true);
+  const [openPost, setOpenPost] = useState<string | null>(null);
+
+  const load = async () => {
+    let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50);
+    if (channel !== "All") q = q.eq("faculty_channel", channel);
+    const { data, error } = await q;
+    if (error) toast.error(error.message);
+    const list = (data ?? []) as Post[];
+    setPosts(list);
+    setProfiles(await fetchProfiles(list.map((p) => p.user_id)));
+    if (list.length) {
+      const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
+      const m: Record<string, number> = {};
+      (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
+      setCounts(m);
+    }
+    setLoading(false);
+  };
+
+  useEffect(() => {
+    setLoading(true);
+    load();
+    const ch = supabase
+      .channel(`feed-${channel}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, load)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [channel]);
+
   return (
-    <div
-      className="flex min-h-screen items-center justify-center"
-      style={{ backgroundColor: "#fcfbf8" }}
-    >
-      <img
-        data-lovable-blank-page-placeholder="REMOVE_THIS"
-        src="https://cdn.gpteng.co/blank-app-v1.svg"
-        alt="Your app will live here!"
-      />
+    <>
+      <div className="no-scrollbar sticky top-[57px] z-20 flex gap-2 overflow-x-auto border-b bg-background px-4 py-3">
+        {["All", ...FACULTIES].map((c) => (
+          <button key={c} onClick={() => setChannel(c)} className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold transition ${channel === c ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}>
+            {c === "All" ? "All" : shortFaculty(c)}
+          </button>
+        ))}
+      </div>
+      <div className="space-y-4 p-4">
+        <Composer defaultChannel={channel} onPosted={load} />
+        {loading ? (
+          <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+        ) : posts.length === 0 ? (
+          <p className="py-10 text-center text-muted-foreground">No posts in this channel yet.</p>
+        ) : (
+          posts.map((p) => <PostCard key={p.id} post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />)
+        )}
+      </div>
+      <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
+    </>
+  );
+}
+
+function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPosted: () => void }) {
+  const { user, profile } = useAuth();
+  const [content, setContent] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [faculty, setFaculty] = useState<string>(profile?.faculty || FACULTIES[0]);
+  const [busy, setBusy] = useState(false);
+  const ref = useRef<HTMLInputElement>(null);
+  useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
+
+  const post = async () => {
+    if (!user || (!content.trim() && !file)) return;
+    setBusy(true);
+    try {
+      const image_url = file ? await uploadImage(file, user.id) : null;
+      const { error } = await supabase.from("posts").insert({ user_id: user.id, content: content.trim(), image_url, faculty_channel: faculty });
+      if (error) throw error;
+      setContent(""); setFile(null);
+      toast.success("Posted!");
+      onPosted();
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
+  };
+
+  return (
+    <div className="rounded-2xl border bg-card p-4 shadow-card">
+      <div className="flex gap-3">
+        <Avatar url={profile?.avatar_url} name={profile?.full_name} />
+        <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="What's happening on campus?" rows={2} className="flex-1 resize-none bg-transparent pt-2 text-[15px] outline-none" />
+      </div>
+      {file && (
+        <div className="relative mt-3">
+          <img src={URL.createObjectURL(file)} className="max-h-64 w-full rounded-xl object-cover" alt="" />
+          <button onClick={() => setFile(null)} className="absolute right-2 top-2 rounded-full bg-foreground/70 p-1 text-background"><X className="h-4 w-4" /></button>
+        </div>
+      )}
+      <div className="mt-3 flex items-center gap-2 border-t pt-3">
+        <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
+        <button onClick={() => ref.current?.click()} className="rounded-full p-2 text-primary hover:bg-accent"><ImagePlus className="h-5 w-5" /></button>
+        <select value={faculty} onChange={(e) => setFaculty(e.target.value)} className="min-w-0 flex-1 truncate rounded-full bg-muted px-3 py-2 text-xs font-medium outline-none">
+          {FACULTIES.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
+        </select>
+        <button onClick={post} disabled={busy} className="rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Post"}
+        </button>
+      </div>
     </div>
   );
 }
