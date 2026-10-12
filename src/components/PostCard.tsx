@@ -4,7 +4,7 @@ import { Heart, MessageCircle } from "lucide-react";
 import { Avatar } from "./AppShell";
 import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
 
-export function PostCard({ post, author, commentCount, onComments }: { post: Post; author?: Profile; commentCount: number; onComments: () => void }) {
+export function PostCard({ post, author, commentCount, onComments }: { post: Post; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const key = `afued-like-${post.id}`;
   const [liked, setLiked] = useState(false);
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);

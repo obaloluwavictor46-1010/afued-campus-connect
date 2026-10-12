@@ -21,7 +21,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     if (data) return setProfile(data);
     // Profile missing (e.g. signup needed email confirmation) — create from metadata
     const m = u.user_metadata ?? {};
-    const row = { id: u.id, email: u.email, full_name: m.full_name ?? "", phone_number: m.phone_number ?? "", faculty: m.faculty ?? "", avatar_url: null };
+    const row = { id: u.id, email: u.email, full_name: m["full_name"] ?? "", phone_number: m["phone_number"] ?? "", faculty: m["faculty"] ?? "", avatar_url: null };
     await supabase.from("profiles").upsert(row);
     setProfile(row as Profile);
   };

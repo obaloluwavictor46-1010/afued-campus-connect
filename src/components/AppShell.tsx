@@ -43,7 +43,7 @@ export function AppShell({ children, title }: { children: ReactNode; title?: str
   );
 }
 
-export function Avatar({ url, name, size = 40 }: { url?: string | null; name?: string | null; size?: number }) {
+export function Avatar({ url, name, size = 40 }: { url?: string | null | undefined; name?: string | null | undefined; size?: number }) {
   const initials = (name || "?").split(" ").map((s) => s[0]).slice(0, 2).join("").toUpperCase();
   return url ? (
     <img src={url} alt={name ?? ""} style={{ width: size, height: size }} className="rounded-full object-cover ring-2 ring-primary/20" />

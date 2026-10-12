@@ -22,7 +22,7 @@ export function CommentsSheet({ postId, onClose }: { postId: string | null; onCl
   };
 
   useEffect(() => {
-    if (!postId) return;
+    if (!postId) return undefined;
     load(postId);
     const ch = supabase
       .channel(`comments-${postId}`)
