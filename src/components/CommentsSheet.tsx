@@ -34,7 +34,7 @@ export function CommentsSheet({ postId, onClose }: { postId: string | null; onCl
   const send = async () => {
     if (!text.trim() || !postId || !user) return;
     const { error } = await supabase.from("comments").insert({ post_id: postId, user_id: user.id, content: text.trim() });
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     setText("");
     load(postId);
   };
