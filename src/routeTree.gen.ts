@@ -10,13 +10,27 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as IndexRouteImport } from './routes/index'
+import { Route as AdminRouteImport } from './routes/admin'
+import { Route as AnnouncementsRouteImport } from './routes/announcements'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as ProfileRouteImport } from './routes/profile'
+import { Route as ChatIndexRouteImport } from './routes/chat.index'
+import { Route as ChatUserIdRouteImport } from './routes/chat.$userId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AdminRoute = AdminRouteImport.update({
+  id: '/admin',
+  path: '/admin',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AnnouncementsRoute = AnnouncementsRouteImport.update({
+  id: '/announcements',
+  path: '/announcements',
   getParentRoute: () => rootRouteImport,
 } as any)
 const AuthRoute = AuthRouteImport.update({
@@ -34,39 +48,90 @@ const ProfileRoute = ProfileRouteImport.update({
   path: '/profile',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ChatIndexRoute = ChatIndexRouteImport.update({
+  id: '/chat/',
+  path: '/chat/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ChatUserIdRoute = ChatUserIdRouteImport.update({
+  id: '/chat/$userId',
+  path: '/chat/$userId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/announcements': typeof AnnouncementsRoute
   '/auth': typeof AuthRoute
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
+  '/chat/$userId': typeof ChatUserIdRoute
+  '/chat/': typeof ChatIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/announcements': typeof AnnouncementsRoute
   '/auth': typeof AuthRoute
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
+  '/chat/$userId': typeof ChatUserIdRoute
+  '/chat': typeof ChatIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/admin': typeof AdminRoute
+  '/announcements': typeof AnnouncementsRoute
   '/auth': typeof AuthRoute
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
+  '/chat/$userId': typeof ChatUserIdRoute
+  '/chat/': typeof ChatIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/auth' | '/marketplace' | '/profile'
+  fullPaths:
+    | '/'
+    | '/admin'
+    | '/announcements'
+    | '/auth'
+    | '/marketplace'
+    | '/profile'
+    | '/chat/$userId'
+    | '/chat/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/auth' | '/marketplace' | '/profile'
-  id: '__root__' | '/' | '/auth' | '/marketplace' | '/profile'
+  to:
+    | '/'
+    | '/admin'
+    | '/announcements'
+    | '/auth'
+    | '/marketplace'
+    | '/profile'
+    | '/chat/$userId'
+    | '/chat'
+  id:
+    | '__root__'
+    | '/'
+    | '/admin'
+    | '/announcements'
+    | '/auth'
+    | '/marketplace'
+    | '/profile'
+    | '/chat/$userId'
+    | '/chat/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  AdminRoute: typeof AdminRoute
+  AnnouncementsRoute: typeof AnnouncementsRoute
   AuthRoute: typeof AuthRoute
   MarketplaceRoute: typeof MarketplaceRoute
   ProfileRoute: typeof ProfileRoute
+  ChatUserIdRoute: typeof ChatUserIdRoute
+  ChatIndexRoute: typeof ChatIndexRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -76,6 +141,20 @@ declare module '@tanstack/react-router' {
       path: '/'
       fullPath: '/'
       preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/admin': {
+      id: '/admin'
+      path: '/admin'
+      fullPath: '/admin'
+      preLoaderRoute: typeof AdminRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/announcements': {
+      id: '/announcements'
+      path: '/announcements'
+      fullPath: '/announcements'
+      preLoaderRoute: typeof AnnouncementsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/auth': {
@@ -99,14 +178,32 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProfileRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/chat/': {
+      id: '/chat/'
+      path: '/chat'
+      fullPath: '/chat/'
+      preLoaderRoute: typeof ChatIndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/chat/$userId': {
+      id: '/chat/$userId'
+      path: '/chat/$userId'
+      fullPath: '/chat/$userId'
+      preLoaderRoute: typeof ChatUserIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  AdminRoute: AdminRoute,
+  AnnouncementsRoute: AnnouncementsRoute,
   AuthRoute: AuthRoute,
   MarketplaceRoute: MarketplaceRoute,
   ProfileRoute: ProfileRoute,
+  ChatUserIdRoute: ChatUserIdRoute,
+  ChatIndexRoute: ChatIndexRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
