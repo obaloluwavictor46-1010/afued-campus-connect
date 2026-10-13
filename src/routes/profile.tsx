@@ -87,7 +87,7 @@ function EditProfile({ onClose }: { onClose: () => void }) {
     if (!user) return;
     setBusy(true);
     try {
-      const avatar_url = file ? await uploadImage(file, `avatars/${user.id}`) : profile?.avatar_url ?? null;
+      const avatar_url = file ? await uploadImage(file, user.id, "avatars") : profile?.avatar_url ?? null;
       const { error } = await supabase.from("profiles").upsert({ id: user.id, email: user.email, ...f, avatar_url });
       if (error) throw error;
       toast.success("Profile updated"); onClose();

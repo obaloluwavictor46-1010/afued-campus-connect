@@ -98,7 +98,7 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
     if (!user) return;
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, `announcements/${user.id}`) : null;
+      const image_url = file ? await uploadImage(file, user.id, "announcement-videos") : null;
       const { error } = await supabase.from("announcements").insert({ author_id: user.id, title: f.title.trim(), content: f.content.trim(), image_url });
       if (error) throw error;
       toast.success("Announcement posted"); onDone(); onClose();

@@ -121,7 +121,7 @@ function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => voi
     if (f.whatsapp_number.replace(/\D/g, "").length < 10) { toast.error("Enter a valid WhatsApp number"); return; }
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, user.id, "marketplace") : null;
+      const image_url = file ? await uploadImage(file, user.id, "marketplace-images") : null;
       const { error } = await supabase.from("marketplace_items").insert({ seller_id: user.id, title: f.title, description: f.description, price: Number(f.price), image_url, whatsapp_number: f.whatsapp_number.trim() });
       if (error) throw error;
       setF({ title: "", description: "", price: "", whatsapp_number: "" }); setFile(null);

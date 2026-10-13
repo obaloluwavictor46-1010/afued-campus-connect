@@ -89,7 +89,7 @@ function Thread() {
     setBusy(true);
     try {
       const type = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "file";
-      const url = await uploadFile(Object.assign(file, { name }), "chat", me, ext);
+      const url = await uploadFile(Object.assign(file, { name }), "chat-attachments", me, ext);
       await send({ media_url: url, media_type: type, file_name: name });
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
   };
