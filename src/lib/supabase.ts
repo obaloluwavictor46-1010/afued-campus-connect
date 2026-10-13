@@ -53,7 +53,19 @@ export type Post = {
   created_at: string;
 };
 
-export async function uploadFile(file: Blob & { name?: string }, bucket: string, folder: string, extOverride?: string) {
+async function compressIfImage(file: Blob & { name?: string }): Promise<Blob & { name?: string }> {
+  if (!file.type?.startsWith("image/") || file.type === "image/gif" || file.size <= 800 * 1024) return file;
+  try {
+    const { default: imageCompression } = await import("browser-image-compression");
+    const out = await imageCompression(file as File, { maxSizeMB: 0.78, maxWidthOrHeight: 1920, useWebWorker: true });
+    return Object.assign(out, { name: file.name });
+  } catch {
+    return file;
+  }
+}
+
+export async function uploadFile(input: Blob & { name?: string }, bucket: string, folder: string, extOverride?: string) {
+  const file = await compressIfImage(input);
   const ext = extOverride || file.name?.split(".").pop() || "bin";
   const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
   const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
