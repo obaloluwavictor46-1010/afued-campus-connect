@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
-import { FACULTIES, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
+import { FACULTIES, FEED_CHANNELS, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -64,7 +64,7 @@ function FeedInner() {
   return (
     <>
       <div className="no-scrollbar sticky top-[57px] z-20 flex gap-2 overflow-x-auto border-b bg-background px-4 py-3">
-        {["All", ...FACULTIES].map((c) => (
+        {["All", ...FEED_CHANNELS].map((c) => (
           <button key={c} onClick={() => setChannel(c)} className={`shrink-0 rounded-full px-4 py-1.5 text-sm font-semibold transition ${channel === c ? "bg-primary text-primary-foreground shadow-glow" : "bg-muted text-muted-foreground"}`}>
             {c === "All" ? "All" : shortFaculty(c)}
           </button>
@@ -89,7 +89,7 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const { user, profile } = useAuth();
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [faculty, setFaculty] = useState<string>(profile?.faculty || FACULTIES[0]);
+  const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
@@ -123,7 +123,7 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
         <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         <button onClick={() => ref.current?.click()} className="rounded-full p-2 text-primary hover:bg-accent"><ImagePlus className="h-5 w-5" /></button>
         <select value={faculty} onChange={(e) => setFaculty(e.target.value)} className="min-w-0 flex-1 truncate rounded-full bg-muted px-3 py-2 text-xs font-medium outline-none">
-          {FACULTIES.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
+          {FEED_CHANNELS.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
         </select>
         <button onClick={post} disabled={busy} className="rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
           {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Post"}
