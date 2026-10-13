@@ -89,7 +89,7 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const { user, profile } = useAuth();
   const [content, setContent] = useState("");
   const [file, setFile] = useState<File | null>(null);
-  const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]);
+  const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]!);
   const [busy, setBusy] = useState(false);
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);

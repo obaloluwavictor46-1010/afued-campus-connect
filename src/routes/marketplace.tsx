@@ -118,7 +118,7 @@ function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => voi
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) return;
-    if (f.whatsapp_number.replace(/\D/g, "").length < 10) return toast.error("Enter a valid WhatsApp number");
+    if (f.whatsapp_number.replace(/\D/g, "").length < 10) { toast.error("Enter a valid WhatsApp number"); return; }
     setBusy(true);
     try {
       const image_url = file ? await uploadImage(file, user.id, "marketplace") : null;
