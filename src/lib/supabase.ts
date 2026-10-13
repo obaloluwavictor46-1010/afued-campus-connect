@@ -20,6 +20,9 @@ export const FACULTIES = [
   "Department of Educational Psychology and Counselling",
 ] as const;
 
+// Feed channels (categories)
+export const FEED_CHANNELS = FACULTIES.slice(0, 5);
+
 export const shortFaculty = (f?: string | null) =>
   !f
     ? ""
@@ -37,6 +40,8 @@ export type Profile = {
   phone_number: string | null;
   faculty: string | null;
   avatar_url: string | null;
+  is_admin?: boolean | null;
+  can_post_announcement?: boolean | null;
 };
 
 export type Post = {
@@ -48,12 +53,16 @@ export type Post = {
   created_at: string;
 };
 
-export async function uploadImage(file: File, folder: string) {
-  const ext = file.name.split(".").pop() || "jpg";
+export async function uploadFile(file: Blob & { name?: string }, bucket: string, folder: string, extOverride?: string) {
+  const ext = extOverride || file.name?.split(".").pop() || "bin";
   const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from("posts").upload(path, file, { upsert: false });
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || undefined });
   if (error) throw error;
-  return supabase.storage.from("posts").getPublicUrl(path).data.publicUrl;
+  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+}
+
+export async function uploadImage(file: File, folder: string, bucket = "posts") {
+  return uploadFile(file, bucket, folder);
 }
 
 export async function fetchProfiles(ids: string[]) {
