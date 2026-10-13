@@ -52,6 +52,8 @@
   --color-chart-4: var(--chart-4);
   --color-chart-5: var(--chart-5);
   --color-like: var(--like);
+  --color-online: var(--online);
+  --color-whatsapp: var(--whatsapp);
   --font-sans: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --font-display: "Plus Jakarta Sans", ui-sans-serif, system-ui, sans-serif;
   --color-sidebar: var(--sidebar);
@@ -83,6 +85,8 @@
   --destructive: oklch(0.6 0.22 25);
   --destructive-foreground: oklch(0.99 0 0);
   --like: oklch(0.63 0.24 15);
+  --online: oklch(0.72 0.19 150);
+  --whatsapp: oklch(0.68 0.17 152);
   --border: oklch(0.92 0.01 255);
   --input: oklch(0.92 0.01 255);
   --ring: oklch(0.546 0.215 262.9);
