@@ -74,7 +74,7 @@ function Thread() {
 
   const send = async (row: Partial<Msg>) => {
     const { data, error } = await supabase.from("messages").insert({ sender_id: me, receiver_id: userId, ...row }).select().single();
-    if (error) return toast.error(error.message);
+    if (error) { toast.error(error.message); return; }
     setMsgs((l) => (l.some((x) => x.id === data.id) ? l : [...l, data as Msg]));
   };
 
@@ -104,7 +104,7 @@ function Thread() {
       rec.onstop = () => {
         stream.getTracks().forEach((t) => t.stop());
         const mime = rec.mimeType || "audio/webm";
-        const blob = new Blob(chunks.current, { type: mime.split(";")[0] });
+        const blob = new Blob(chunks.current, { type: mime.split(";")[0] || "audio/webm" });
         const ext = mime.includes("mp4") ? "m4a" : mime.includes("ogg") ? "ogg" : "webm";
         if (blob.size > 0) sendFile(blob, `voice-note.${ext}`, ext);
       };

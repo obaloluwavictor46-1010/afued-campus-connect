@@ -56,7 +56,7 @@ export type Post = {
 export async function uploadFile(file: Blob & { name?: string }, bucket: string, folder: string, extOverride?: string) {
   const ext = extOverride || file.name?.split(".").pop() || "bin";
   const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || undefined });
+  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
   if (error) throw error;
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
