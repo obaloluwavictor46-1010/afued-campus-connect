@@ -1,7 +1,9 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = "https://ciwljsccbheykclimmhq.supabase.co";
-const supabaseKey = "sb_publishable_IhHGFJLuGGicCOYCKYLHqg_rKUwLNRH";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || "https://ciwljsccbheykclimmhq.supabase.co";
+const supabaseKey =
+  import.meta.env.VITE_SUPABASE_ANON_KEY ||
+  "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpd2xqc2NjYmhleWtjbGltbWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MTY3MzgsImV4cCI6MjEwNzM5MjczOH0.h41kKfoXGVdk3RJEMvkwUFfC3k4g7pUTkpvX_zVzNgo";
 
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
