@@ -33,9 +33,11 @@ function Page() {
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
 
+  const [loadError, setLoadError] = useState<string | null>(null);
   const load = async () => {
+    setLoadError(null);
     const { data, error } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
-    if (error) toast.error(error.message);
+    if (error) { setLoadError(error.message); setList([]); setLoading(false); return; }
     setList((data ?? []) as A[]);
     setAuthors(await fetchProfiles((data ?? []).map((a: A) => a.author_id)));
     setLoading(false);
