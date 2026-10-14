@@ -2,7 +2,8 @@ import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
 import { Heart, MessageCircle } from "lucide-react";
 import { Avatar } from "./AppShell";
-import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
+import { kindOfUrl, shortFaculty, type Post, type Profile } from "@/lib/supabase";
+import { MediaView } from "./MediaView";
 
 export function PostCard({ post, author, commentCount, onComments }: { post: Post; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const key = `afued-like-${post.id}`;
@@ -27,7 +28,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: Pos
         )}
       </div>
       {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
-      {post.image_url && <img src={post.image_url} alt="" className="max-h-[520px] w-full bg-muted object-cover" loading="lazy" />}
+      {post.image_url && <MediaView url={post.image_url} className={kindOfUrl(post.image_url) === "file" ? "mx-4 mb-1" : ""} />}
       <div className="flex items-center gap-5 px-4 py-3">
         <button onClick={toggle} className="flex items-center gap-1.5 text-sm font-medium">
           <Heart className={`h-6 w-6 transition ${liked ? "fill-like text-like scale-110" : ""}`} />

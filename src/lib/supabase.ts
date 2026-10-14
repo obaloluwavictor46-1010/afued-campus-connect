@@ -55,6 +55,33 @@ export type Post = {
   created_at: string;
 };
 
+export const MAX_IMAGE = 10 * 1024 * 1024;
+export const MAX_VIDEO = 50 * 1024 * 1024;
+export const MAX_FILE = 50 * 1024 * 1024;
+export const MEDIA_ACCEPT = "image/*,video/mp4,video/quicktime,.mp4,.mov,.pdf,.doc,.docx";
+
+export type MediaKind = "image" | "video" | "audio" | "file";
+export const kindOfFile = (f: Blob) =>
+  (f.type.startsWith("image/") ? "image" : f.type.startsWith("video/") ? "video" : f.type.startsWith("audio/") ? "audio" : "file") as MediaKind;
+export const kindOfUrl = (url: string): MediaKind => {
+  const ext = url.split("?")[0]!.split(".").pop()?.toLowerCase() ?? "";
+  if (["jpg", "jpeg", "png", "gif", "webp", "heic", "avif", "bmp"].includes(ext)) return "image";
+  if (["mp4", "mov", "webm", "m4v", "qt"].includes(ext)) return "video";
+  if (["mp3", "m4a", "ogg", "wav", "aac"].includes(ext)) return "audio";
+  return "file";
+};
+export const fileNameFromUrl = (url: string) => {
+  const last = decodeURIComponent(url.split("?")[0]!.split("/").pop() ?? "file");
+  return last.replace(/^\d+-[a-z0-9]+-/, "");
+};
+
+/** Throws a friendly error if the file is too big. */
+export function checkSize(file: Blob) {
+  const k = kindOfFile(file);
+  const max = k === "image" ? MAX_IMAGE : k === "video" ? MAX_VIDEO : MAX_FILE;
+  if (file.size > max) throw new Error(`${k === "image" ? "Image" : k === "video" ? "Video" : "File"} is too large (max ${max / 1024 / 1024}MB)`);
+}
+
 async function compressIfImage(file: Blob & { name?: string }): Promise<Blob & { name?: string }> {
   if (!file.type?.startsWith("image/") || file.type === "image/gif" || file.size <= 800 * 1024) return file;
   try {
@@ -66,17 +93,43 @@ async function compressIfImage(file: Blob & { name?: string }): Promise<Blob & {
   }
 }
 
-export async function uploadFile(input: Blob & { name?: string }, bucket: string, folder: string, extOverride?: string) {
+/** Upload with real progress (0-100) via the storage REST endpoint. */
+export async function uploadFile(
+  input: Blob & { name?: string },
+  bucket: string,
+  folder: string,
+  extOverride?: string,
+  onProgress?: (pct: number) => void,
+) {
+  checkSize(input);
+  onProgress?.(0);
   const file = await compressIfImage(input);
   const ext = extOverride || file.name?.split(".").pop() || "bin";
-  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2)}.${ext}`;
-  const { error } = await supabase.storage.from(bucket).upload(path, file, { upsert: false, contentType: file.type || "application/octet-stream" });
-  if (error) throw error;
+  const base = (file.name || "file").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60) || "file";
+  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${base}.${ext}`;
+  const { data: s } = await supabase.auth.getSession();
+  const token = s.session?.access_token || supabaseKey;
+  await new Promise<void>((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${path}`);
+    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.setRequestHeader("apikey", supabaseKey);
+    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
+    xhr.setRequestHeader("x-upsert", "false");
+    xhr.setRequestHeader("cache-control", "max-age=31536000");
+    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(Math.min(99, Math.round((e.loaded / e.total) * 100)));
+    xhr.onload = () => {
+      if (xhr.status >= 200 && xhr.status < 300) { onProgress?.(100); resolve(); }
+      else { let m = "Upload failed"; try { m = JSON.parse(xhr.responseText).message || m; } catch { /* */ } reject(new Error(m)); }
+    };
+    xhr.onerror = () => reject(new Error("Network error during upload"));
+    xhr.send(file);
+  });
   return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
 }
 
-export async function uploadImage(file: File, folder: string, bucket = "posts") {
-  return uploadFile(file, bucket, folder);
+export async function uploadImage(file: File, folder: string, bucket = "posts", onProgress?: (p: number) => void) {
+  return uploadFile(file, bucket, folder, undefined, onProgress);
 }
 
 export async function fetchProfiles(ids: string[]) {
