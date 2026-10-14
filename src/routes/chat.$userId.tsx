@@ -1,10 +1,11 @@
 import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
 import { format } from "date-fns";
-import { ArrowLeft, Check, CheckCheck, FileText, Loader2, Mic, Paperclip, Send, Square } from "lucide-react";
+import { ArrowLeft, Check, CheckCheck, Loader2, Mic, Paperclip, Send, Square } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
-import { supabase, uploadFile, type Profile } from "@/lib/supabase";
+import { FileChip, UploadBar } from "@/components/MediaView";
+import { kindOfFile, supabase, uploadFile, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { useOnline } from "@/lib/presence";
 
@@ -85,13 +86,14 @@ function Thread() {
     await send({ content: t });
   };
 
+  const [pct, setPct] = useState<number | null>(null);
   const sendFile = async (file: Blob, name: string, ext?: string) => {
     setBusy(true);
     try {
-      const type = file.type.startsWith("image/") ? "image" : file.type.startsWith("video/") ? "video" : file.type.startsWith("audio/") ? "audio" : "file";
-      const url = await uploadFile(Object.assign(file, { name }), "chat-attachments", me, ext);
+      const type = kindOfFile(file);
+      const url = await uploadFile(Object.assign(file, { name }), "chat-attachments", me, ext, setPct);
       await send({ media_url: url, media_type: type, file_name: name });
-    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
   };
 
   const toggleRecord = async () => {
@@ -147,8 +149,9 @@ function Thread() {
         <div ref={endRef} />
       </div>
 
+      {pct !== null && <div className="border-t bg-card px-3 pb-1"><UploadBar pct={pct} /></div>}
       <div className="flex items-end gap-2 border-t bg-card p-2">
-        <input ref={fileRef} type="file" hidden accept="image/*,video/*,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
+        <input ref={fileRef} type="file" hidden accept="image/*,video/mp4,video/quicktime,.mp4,.mov,audio/*,.pdf,.doc,.docx,.xls,.xlsx,.ppt,.pptx,.txt,.zip"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) sendFile(f, f.name); e.target.value = ""; }} />
         <button onClick={() => fileRef.current?.click()} disabled={busy || recording} className="rounded-full p-2.5 text-muted-foreground" aria-label="Attach">
           {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : <Paperclip className="h-5 w-5" />}
@@ -177,11 +180,7 @@ function Thread() {
 function Media({ m, out }: { m: Msg; out: boolean }) {
   if (!m.media_url) return null;
   if (m.media_type === "image") return <a href={m.media_url} target="_blank" rel="noreferrer"><img src={m.media_url} alt="" className="mb-1 max-h-72 rounded-xl object-cover" /></a>;
-  if (m.media_type === "video") return <video src={m.media_url} controls className="mb-1 max-h-72 rounded-xl" />;
+  if (m.media_type === "video") return <video src={m.media_url} controls playsInline preload="metadata" className="mb-1 max-h-72 rounded-xl" />;
   if (m.media_type === "audio") return <audio src={m.media_url} controls className="mb-1 h-10 w-60 max-w-full" />;
-  return (
-    <a href={m.media_url} target="_blank" rel="noreferrer" className={`mb-1 flex items-center gap-2 rounded-xl p-2 ${out ? "bg-primary-foreground/15" : "bg-muted"}`}>
-      <FileText className="h-6 w-6 shrink-0" /><span className="truncate text-sm underline">{m.file_name || "File"}</span>
-    </a>
-  );
+  return <FileChip url={m.media_url} name={m.file_name || "File"} className={`mb-1 ${out ? "bg-primary-foreground/15" : ""}`} />;
 }

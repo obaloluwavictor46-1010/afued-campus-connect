@@ -1,11 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useRef, useState } from "react";
-import { ImagePlus, Loader2, X } from "lucide-react";
+import { ImagePlus, Loader2, Paperclip, X } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
-import { FACULTIES, FEED_CHANNELS, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
+import { LocalPreview, UploadBar } from "@/components/MediaView";
+import { FEED_CHANNELS, MEDIA_ACCEPT, checkSize, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -94,17 +95,18 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
 
+  const [pct, setPct] = useState<number | null>(null);
   const post = async () => {
     if (!user || (!content.trim() && !file)) return;
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, user.id) : null;
+      const image_url = file ? await uploadImage(file, user.id, "posts", setPct) : null;
       const { error } = await supabase.from("posts").insert({ user_id: user.id, content: content.trim(), image_url, faculty_channel: faculty });
       if (error) throw error;
       setContent(""); setFile(null);
       toast.success("Posted!");
       onPosted();
-    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); }
+    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
   };
 
   return (
@@ -115,18 +117,20 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
       </div>
       {file && (
         <div className="relative mt-3">
-          <img src={URL.createObjectURL(file)} className="max-h-64 w-full rounded-xl object-cover" alt="" />
-          <button onClick={() => setFile(null)} className="absolute right-2 top-2 rounded-full bg-foreground/70 p-1 text-background"><X className="h-4 w-4" /></button>
+          <LocalPreview file={file} />
+          {!busy && <button onClick={() => setFile(null)} className="absolute right-2 top-2 rounded-full bg-foreground/70 p-1 text-background"><X className="h-4 w-4" /></button>}
         </div>
       )}
+      <UploadBar pct={pct} />
       <div className="mt-3 flex items-center gap-2 border-t pt-3">
-        <input ref={ref} type="file" accept="image/*" hidden onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
-        <button onClick={() => ref.current?.click()} className="rounded-full p-2 text-primary hover:bg-accent"><ImagePlus className="h-5 w-5" /></button>
+        <input ref={ref} type="file" accept={MEDIA_ACCEPT} hidden onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ""; if (f) { try { checkSize(f); setFile(f); } catch (err) { toast.error((err as Error).message); } } }} />
+        <button onClick={() => ref.current?.click()} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add photo, video or file"><ImagePlus className="h-5 w-5" /></button>
+        <button onClick={() => ref.current?.click()} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add video or file"><Paperclip className="h-5 w-5" /></button>
         <select value={faculty} onChange={(e) => setFaculty(e.target.value)} className="min-w-0 flex-1 truncate rounded-full bg-muted px-3 py-2 text-xs font-medium outline-none">
           {FEED_CHANNELS.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
         </select>
         <button onClick={post} disabled={busy} className="rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground disabled:opacity-60">
-          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : "Post"}
+          {busy ? (pct !== null ? `${pct}%` : <Loader2 className="h-4 w-4 animate-spin" />) : "Post"}
         </button>
       </div>
     </div>
