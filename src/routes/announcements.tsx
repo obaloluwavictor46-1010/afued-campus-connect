@@ -57,6 +57,12 @@ function Page() {
     <div className="space-y-4 p-4">
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
+      ) : loadError ? (
+        <div className="py-16 text-center text-muted-foreground">
+          <Megaphone className="mx-auto mb-3 h-10 w-10" />
+          <p>Couldn't load announcements.</p>
+          <button onClick={() => { setLoading(true); load(); }} className="mt-3 rounded-full bg-primary px-5 py-2 text-sm font-semibold text-primary-foreground">Try again</button>
+        </div>
       ) : list.length === 0 ? (
         <div className="py-16 text-center text-muted-foreground"><Megaphone className="mx-auto mb-3 h-10 w-10" />No announcements yet.</div>
       ) : (
