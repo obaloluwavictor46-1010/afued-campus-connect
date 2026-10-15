@@ -135,7 +135,7 @@ export async function uploadFile(
   extOverride?: string,
   onProgress?: (pct: number) => void,
 ) {
-  checkSize(input);
+  checkSize(input, 100);
   onProgress?.(0);
   const file = await compressIfImage(input);
   const ext = extOverride || file.name?.split(".").pop() || "bin";
