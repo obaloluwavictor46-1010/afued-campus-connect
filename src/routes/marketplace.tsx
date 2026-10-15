@@ -1,10 +1,11 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Loader2, Plus, ShoppingBag, MessageCircle } from "lucide-react";
+import { ImagePlus, Loader2, Plus, ShoppingBag, MessageCircle, MessageSquare } from "lucide-react";
 import { toast } from "sonner";
-import { AppShell } from "@/components/AppShell";
+import { AppShell, Avatar } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { fetchProfiles, supabase, uploadImage, type Profile } from "@/lib/supabase";
+import { MediaGallery, UploadBar, useMediaPicker } from "@/components/MediaView";
+import { fetchProfiles, insertWithMedia, kindOfUrl, mediaOf, supabase, uploadMany, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/marketplace")({
@@ -22,7 +23,7 @@ export const Route = createFileRoute("/marketplace")({
   component: () => <AppShell title="Marketplace"><Market /></AppShell>,
 });
 
-type Item = { id: string; seller_id: string; title: string; description: string | null; price: number; image_url: string | null; whatsapp_number: string | null; created_at: string };
+type Item = { id: string; seller_id: string; title: string; description: string | null; price: number; image_url: string | null; media_urls?: string[] | null; whatsapp_number: string | null; created_at: string };
 const naira = (n: number) => `₦${Number(n).toLocaleString()}`;
 
 function waLink(item: Item) {
@@ -71,16 +72,30 @@ function Market() {
         <div className="py-16 text-center text-muted-foreground"><ShoppingBag className="mx-auto mb-3 h-10 w-10" />No items yet. List the first one!</div>
       ) : (
         <div className="grid grid-cols-2 gap-3">
-          {items.map((i) => (
+          {items.map((i) => {
+            const m = mediaOf(i);
+            const cover = m.find((u) => kindOfUrl(u) !== "file");
+            return (
             <div key={i.id} role="button" onClick={() => setView(i)} className="cursor-pointer overflow-hidden rounded-2xl border bg-card text-left shadow-card">
-              <div className="aspect-square bg-muted">{i.image_url && <img src={i.image_url} alt={i.title} className="h-full w-full object-cover" loading="lazy" />}</div>
+              <div className="relative aspect-square bg-muted">
+                {cover && (kindOfUrl(cover) === "video"
+                  ? <video src={cover} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+                  : <img src={cover} alt={i.title} className="h-full w-full object-cover" loading="lazy" />)}
+                {m.length > 1 && <span className="absolute right-2 top-2 rounded-full bg-foreground/70 px-2 py-0.5 text-[11px] font-semibold text-background">1/{m.length}</span>}
+                {cover && kindOfUrl(cover) === "video" && <span className="absolute bottom-2 left-2 rounded bg-foreground/70 px-1.5 text-[11px] text-background">▶ Video</span>}
+              </div>
               <div className="p-3">
                 <p className="truncate text-sm font-semibold">{i.title}</p>
                 <p className="font-display font-extrabold text-primary">{naira(i.price)}</p>
+                <Link to="/u/$userId" params={{ userId: i.seller_id }} onClick={(e) => e.stopPropagation()} className="mt-1 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Avatar url={sellers[i.seller_id]?.avatar_url} name={sellers[i.seller_id]?.full_name} size={20} />
+                  <span className="truncate hover:underline">{sellers[i.seller_id]?.full_name || "Seller"}</span>
+                </Link>
                 <WhatsAppButton item={i} small />
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
       <button onClick={() => setAdding(true)} className="fixed bottom-24 right-5 z-30 flex items-center gap-2 rounded-full bg-primary px-5 py-3.5 font-semibold text-primary-foreground shadow-glow">
@@ -88,17 +103,25 @@ function Market() {
       </button>
       <AddItem open={adding} onClose={() => setAdding(false)} onAdded={load} />
       <Dialog open={!!view} onOpenChange={(o) => !o && setView(null)}>
-        <DialogContent className="max-w-md rounded-2xl">
+        <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
           {view && (
             <>
-              {view.image_url && <img src={view.image_url} alt="" className="max-h-72 w-full rounded-xl object-cover" />}
+              <MediaGallery urls={mediaOf(view)} className="-mx-2 overflow-hidden rounded-xl" />
               <DialogHeader><DialogTitle>{view.title}</DialogTitle></DialogHeader>
               <p className="font-display text-2xl font-extrabold text-primary">{naira(view.price)}</p>
               {view.description && <p className="text-sm text-muted-foreground">{view.description}</p>}
-              <div className="rounded-xl bg-muted p-3 text-sm">
-                <p className="font-semibold">{sellers[view.seller_id]?.full_name || "Seller"}</p>
-                {view.whatsapp_number && <p className="text-muted-foreground">WhatsApp: {view.whatsapp_number}</p>}
-              </div>
+              <Link to="/u/$userId" params={{ userId: view.seller_id }} className="flex items-center gap-3 rounded-xl bg-muted p-3 text-sm">
+                <Avatar url={sellers[view.seller_id]?.avatar_url} name={sellers[view.seller_id]?.full_name} size={36} />
+                <div className="min-w-0">
+                  <p className="font-semibold hover:underline">{sellers[view.seller_id]?.full_name || "Seller"}</p>
+                  {view.whatsapp_number && <p className="text-muted-foreground">WhatsApp: {view.whatsapp_number}</p>}
+                </div>
+              </Link>
+              {view.seller_id !== user?.id && (
+                <Link to="/chat/$userId" params={{ userId: view.seller_id }} className="flex items-center justify-center gap-2 rounded-full bg-primary py-3 text-sm font-semibold text-primary-foreground">
+                  <MessageSquare className="h-5 w-5" /> Chat with Seller
+                </Link>
+              )}
               <WhatsAppButton item={view} />
             </>
           )}
@@ -111,8 +134,9 @@ function Market() {
 function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded: () => void }) {
   const { user, profile } = useAuth();
   const [f, setF] = useState({ title: "", description: "", price: "", whatsapp_number: "" });
-  const [file, setFile] = useState<File | null>(null);
+  const picker = useMediaPicker(100);
   const [busy, setBusy] = useState(false);
+  const [pct, setPct] = useState<number | null>(null);
   useEffect(() => { if (open && !f.whatsapp_number && profile?.phone_number) setF((x) => ({ ...x, whatsapp_number: profile.phone_number ?? "" })); }, [open]);
   const field = "w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40";
   const submit = async (e: React.FormEvent) => {
@@ -121,23 +145,27 @@ function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => voi
     if (f.whatsapp_number.replace(/\D/g, "").length < 10) { toast.error("Enter a valid WhatsApp number"); return; }
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, user.id, "marketplace-images") : null;
-      const { error } = await supabase.from("marketplace_items").insert({ seller_id: user.id, title: f.title, description: f.description, price: Number(f.price), image_url, whatsapp_number: f.whatsapp_number.trim() });
-      if (error) throw error;
-      setF({ title: "", description: "", price: "", whatsapp_number: "" }); setFile(null);
+      const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
+      await insertWithMedia("marketplace_items", { seller_id: user.id, title: f.title, description: f.description, price: Number(f.price), whatsapp_number: f.whatsapp_number.trim() }, urls);
+      setF({ title: "", description: "", price: "", whatsapp_number: "" }); picker.clear();
       toast.success("Item listed!"); onAdded(); onClose();
-    } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); }
+    } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); setPct(null); }
   };
   return (
-    <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-w-md rounded-2xl">
+    <Dialog open={open} onOpenChange={(o) => !o && !busy && onClose()}>
+      <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
         <DialogHeader><DialogTitle>List an item</DialogTitle></DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <input required placeholder="Title" className={field} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
           <input required type="number" min="0" placeholder="Price (₦)" className={field} value={f.price} onChange={(e) => setF({ ...f, price: e.target.value })} />
           <input required type="tel" placeholder="WhatsApp number e.g. 08012345678" className={field} value={f.whatsapp_number} onChange={(e) => setF({ ...f, whatsapp_number: e.target.value })} />
           <textarea rows={3} placeholder="Description" className={field} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
-          <input type="file" accept="image/*" onChange={(e) => setFile(e.target.files?.[0] ?? null)} className="text-sm" />
+          {picker.input}
+          <button type="button" onClick={picker.open} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-semibold text-primary">
+            <ImagePlus className="h-5 w-5" /> Add up to 15 photos or videos (video max 100MB)
+          </button>
+          {picker.grid(busy)}
+          <UploadBar pct={pct} />
           <button disabled={busy} className="flex w-full justify-center rounded-2xl bg-primary py-3 font-semibold text-primary-foreground disabled:opacity-60">
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : "List item"}
           </button>

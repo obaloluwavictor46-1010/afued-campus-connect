@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Loader2, Megaphone, Plus, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Megaphone, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { MEDIA_ACCEPT, checkSize, fetchProfiles, kindOfUrl, supabase, uploadImage, type Profile } from "@/lib/supabase";
-import { LocalPreview, MediaView, UploadBar } from "@/components/MediaView";
+import { fetchProfiles, insertWithMedia, mediaOf, supabase, uploadMany, type Profile } from "@/lib/supabase";
+import { MediaGallery, UploadBar, useMediaPicker } from "@/components/MediaView";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/announcements")({
@@ -82,7 +82,7 @@ function Page() {
             </div>
             <h2 className="px-4 font-display text-lg font-bold">{a.title}</h2>
             {a.content && <p className="whitespace-pre-wrap px-4 pb-3 pt-1 text-[15px] leading-relaxed">{a.content}</p>}
-            {a.image_url && <MediaView url={a.image_url} className={kindOfUrl(a.image_url) === "file" ? "mx-4 mb-4" : ""} />}
+            <MediaGallery urls={mediaOf(a)} className="pb-2" />
           </article>
         ))
       )}
@@ -99,7 +99,7 @@ function Page() {
 function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { user } = useAuth();
   const [f, setF] = useState({ title: "", content: "" });
-  const [file, setFile] = useState<File | null>(null);
+  const picker = useMediaPicker(50);
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
   const field = "w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40";
@@ -108,22 +108,24 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
     if (!user) return;
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, user.id, "announcement-videos", setPct) : null;
-      const { error } = await supabase.from("announcements").insert({ author_id: user.id, title: f.title.trim(), content: f.content.trim(), image_url });
-      if (error) throw error;
+      const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
+      await insertWithMedia("announcements", { author_id: user.id, title: f.title.trim(), content: f.content.trim() }, urls);
       toast.success("Announcement posted"); onDone(); onClose();
     } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); setPct(null); }
   };
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
-      <DialogContent className="max-w-md rounded-2xl">
+      <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
         <DialogHeader><DialogTitle>New announcement</DialogTitle></DialogHeader>
         <form onSubmit={submit} className="space-y-3">
           <input required placeholder="Title" className={field} value={f.title} onChange={(e) => setF({ ...f, title: e.target.value })} />
           <textarea rows={5} placeholder="Write the announcement..." className={field} value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} />
-          <p className="text-xs text-muted-foreground">Photo (max 10MB), video mp4/mov (max 50MB) or PDF/Word file</p>
-          <input type="file" accept={MEDIA_ACCEPT} onChange={(e) => { const x = e.target.files?.[0] ?? null; if (x) { try { checkSize(x); setFile(x); } catch (er) { toast.error((er as Error).message); e.target.value = ""; } } else setFile(null); }} className="text-sm" />
-          {file && <LocalPreview file={file} />}
+          {picker.input}
+          <button type="button" onClick={picker.open} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-semibold text-primary">
+            <ImagePlus className="h-5 w-5" /> Add up to 15 photos, videos or files
+          </button>
+          <p className="text-xs text-muted-foreground">Photos max 10MB · Videos mp4/mov max 50MB · PDF/Word</p>
+          {picker.grid(busy)}
           <UploadBar pct={pct} />
           <button disabled={busy} className="flex w-full justify-center rounded-2xl bg-primary py-3 font-semibold text-primary-foreground disabled:opacity-60">
             {busy ? (pct !== null ? `Uploading ${pct}%...` : <Loader2 className="h-5 w-5 animate-spin" />) : "Post announcement"}
