@@ -1,12 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
-import { useEffect, useRef, useState } from "react";
-import { ImagePlus, Loader2, Paperclip, X } from "lucide-react";
+import { useEffect, useState } from "react";
+import { ImagePlus, Loader2, Paperclip } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
-import { LocalPreview, UploadBar } from "@/components/MediaView";
-import { FEED_CHANNELS, MEDIA_ACCEPT, checkSize, fetchProfiles, shortFaculty, supabase, uploadImage, type Post, type Profile } from "@/lib/supabase";
+import { UploadBar, useMediaPicker } from "@/components/MediaView";
+import { FEED_CHANNELS, fetchProfiles, insertWithMedia, shortFaculty, supabase, uploadMany, type Post, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -89,21 +89,19 @@ function FeedInner() {
 function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPosted: () => void }) {
   const { user, profile } = useAuth();
   const [content, setContent] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const picker = useMediaPicker(50);
   const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]!);
   const [busy, setBusy] = useState(false);
-  const ref = useRef<HTMLInputElement>(null);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
 
   const [pct, setPct] = useState<number | null>(null);
   const post = async () => {
-    if (!user || (!content.trim() && !file)) return;
+    if (!user || (!content.trim() && !picker.files.length)) return;
     setBusy(true);
     try {
-      const image_url = file ? await uploadImage(file, user.id, "posts", setPct) : null;
-      const { error } = await supabase.from("posts").insert({ user_id: user.id, content: content.trim(), image_url, faculty_channel: faculty });
-      if (error) throw error;
-      setContent(""); setFile(null);
+      const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
+      await insertWithMedia("posts", { user_id: user.id, content: content.trim(), faculty_channel: faculty }, urls);
+      setContent(""); picker.clear();
       toast.success("Posted!");
       onPosted();
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
@@ -115,17 +113,12 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
         <Avatar url={profile?.avatar_url} name={profile?.full_name} />
         <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="What's happening on campus?" rows={2} className="flex-1 resize-none bg-transparent pt-2 text-[15px] outline-none" />
       </div>
-      {file && (
-        <div className="relative mt-3">
-          <LocalPreview file={file} />
-          {!busy && <button onClick={() => setFile(null)} className="absolute right-2 top-2 rounded-full bg-foreground/70 p-1 text-background"><X className="h-4 w-4" /></button>}
-        </div>
-      )}
+      {picker.grid(busy)}
       <UploadBar pct={pct} />
       <div className="mt-3 flex items-center gap-2 border-t pt-3">
-        <input ref={ref} type="file" accept={MEDIA_ACCEPT} hidden onChange={(e) => { const f = e.target.files?.[0] ?? null; e.target.value = ""; if (f) { try { checkSize(f); setFile(f); } catch (err) { toast.error((err as Error).message); } } }} />
-        <button onClick={() => ref.current?.click()} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add photo, video or file"><ImagePlus className="h-5 w-5" /></button>
-        <button onClick={() => ref.current?.click()} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add video or file"><Paperclip className="h-5 w-5" /></button>
+        {picker.input}
+        <button onClick={picker.open} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add photos or videos"><ImagePlus className="h-5 w-5" /></button>
+        <button onClick={picker.open} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add file"><Paperclip className="h-5 w-5" /></button>
         <select value={faculty} onChange={(e) => setFaculty(e.target.value)} className="min-w-0 flex-1 truncate rounded-full bg-muted px-3 py-2 text-xs font-medium outline-none">
           {FEED_CHANNELS.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
         </select>
