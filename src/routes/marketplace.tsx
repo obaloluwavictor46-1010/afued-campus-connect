@@ -45,6 +45,7 @@ function WhatsAppButton({ item, small }: { item: Item; small?: boolean }) {
 }
 
 function Market() {
+  const { user } = useAuth();
   const [items, setItems] = useState<Item[]>([]);
   const [sellers, setSellers] = useState<Record<string, Profile>>({});
   const [loading, setLoading] = useState(true);

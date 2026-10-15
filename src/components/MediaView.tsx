@@ -14,7 +14,7 @@ export async function downloadUrl(url: string, name?: string) {
   } catch { window.open(url, "_blank"); }
 }
 
-export function DownloadBtn({ url, name, className = "" }: { url: string; name?: string; className?: string }) {
+export function DownloadBtn({ url, name, className = "" }: { url: string; name?: string | undefined; className?: string }) {
   return (
     <button type="button" onClick={(e) => { e.stopPropagation(); downloadUrl(url, name); }} aria-label="Download"
       className={`flex items-center gap-1 rounded-full bg-foreground/70 px-2.5 py-1.5 text-xs font-semibold text-background backdrop-blur ${className}`}>
@@ -91,7 +91,7 @@ export function UploadBar({ pct }: { pct: number | null }) {
   );
 }
 
-function Thumb({ file, onRemove }: { file: File; onRemove?: () => void }) {
+function Thumb({ file, onRemove }: { file: File; onRemove?: (() => void) | undefined }) {
   const url = useMemo(() => URL.createObjectURL(file), [file]);
   useEffect(() => () => URL.revokeObjectURL(url), [url]);
   return (
