@@ -51,12 +51,14 @@ export type Post = {
   user_id: string;
   content: string | null;
   image_url: string | null;
+  media_urls?: string[] | null;
   faculty_channel: string | null;
   created_at: string;
 };
 
+export const MEDIA_BUCKET = "post-media";
+export const MAX_MEDIA = 15;
 export const MAX_IMAGE = 10 * 1024 * 1024;
-export const MAX_VIDEO = 50 * 1024 * 1024;
 export const MAX_FILE = 50 * 1024 * 1024;
 export const MEDIA_ACCEPT = "image/*,video/mp4,video/quicktime,.mp4,.mov,.pdf,.doc,.docx";
 
@@ -75,11 +77,43 @@ export const fileNameFromUrl = (url: string) => {
   return last.replace(/^\d+-[a-z0-9]+-/, "");
 };
 
+/** All media of a row: media_urls array, falling back to the single image_url. */
+export const mediaOf = (row: { media_urls?: string[] | null; image_url?: string | null }) =>
+  row.media_urls?.length ? row.media_urls : row.image_url ? [row.image_url] : [];
+
 /** Throws a friendly error if the file is too big. */
-export function checkSize(file: Blob) {
+export function checkSize(file: Blob, maxVideoMB = 50) {
   const k = kindOfFile(file);
-  const max = k === "image" ? MAX_IMAGE : k === "video" ? MAX_VIDEO : MAX_FILE;
+  const max = k === "image" ? MAX_IMAGE : k === "video" ? maxVideoMB * 1024 * 1024 : MAX_FILE;
   if (file.size > max) throw new Error(`${k === "image" ? "Image" : k === "video" ? "Video" : "File"} is too large (max ${max / 1024 / 1024}MB)`);
+}
+
+/** Upload many files to post-media with combined progress. */
+export async function uploadMany(files: File[], folder: string, onProgress?: (pct: number) => void) {
+  const total = files.reduce((s, f) => s + f.size, 0) || 1;
+  const done: number[] = files.map(() => 0);
+  const report = () => onProgress?.(Math.min(99, Math.round((done.reduce((s, x) => s + x, 0) / total) * 100)));
+  onProgress?.(0);
+  const urls: string[] = new Array(files.length);
+  let next = 0;
+  const worker = async () => {
+    while (next < files.length) {
+      const n = next++;
+      const f = files[n]!;
+      urls[n] = await uploadFile(f, MEDIA_BUCKET, folder, undefined, (p) => { done[n] = (p / 100) * f.size; report(); });
+    }
+  };
+  await Promise.all([worker(), worker(), worker()]);
+  onProgress?.(100);
+  return urls;
+}
+
+/** Insert a row with media_urls; if that column isn't added yet, falls back to image_url only. */
+export async function insertWithMedia(table: string, row: Record<string, unknown>, urls: string[]) {
+  const full = { ...row, image_url: urls[0] ?? null, media_urls: urls };
+  let res = await supabase.from(table).insert(full);
+  if (res.error && /media_urls/.test(res.error.message)) res = await supabase.from(table).insert({ ...row, image_url: urls[0] ?? null });
+  if (res.error) throw res.error;
 }
 
 async function compressIfImage(file: Blob & { name?: string }): Promise<Blob & { name?: string }> {
