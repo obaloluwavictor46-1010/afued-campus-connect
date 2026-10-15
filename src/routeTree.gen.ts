@@ -17,6 +17,7 @@ import { Route as MarketplaceRouteImport } from './routes/marketplace'
 import { Route as ProfileRouteImport } from './routes/profile'
 import { Route as ChatIndexRouteImport } from './routes/chat.index'
 import { Route as ChatUserIdRouteImport } from './routes/chat.$userId'
+import { Route as UUserIdRouteImport } from './routes/u.$userId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -58,6 +59,11 @@ const ChatUserIdRoute = ChatUserIdRouteImport.update({
   path: '/chat/$userId',
   getParentRoute: () => rootRouteImport,
 } as any)
+const UUserIdRoute = UUserIdRouteImport.update({
+  id: '/u/$userId',
+  path: '/u/$userId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
@@ -67,6 +73,7 @@ export interface FileRoutesByFullPath {
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
   '/chat/$userId': typeof ChatUserIdRoute
+  '/u/$userId': typeof UUserIdRoute
   '/chat/': typeof ChatIndexRoute
 }
 export interface FileRoutesByTo {
@@ -77,6 +84,7 @@ export interface FileRoutesByTo {
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
   '/chat/$userId': typeof ChatUserIdRoute
+  '/u/$userId': typeof UUserIdRoute
   '/chat': typeof ChatIndexRoute
 }
 export interface FileRoutesById {
@@ -88,6 +96,7 @@ export interface FileRoutesById {
   '/marketplace': typeof MarketplaceRoute
   '/profile': typeof ProfileRoute
   '/chat/$userId': typeof ChatUserIdRoute
+  '/u/$userId': typeof UUserIdRoute
   '/chat/': typeof ChatIndexRoute
 }
 export interface FileRouteTypes {
@@ -100,6 +109,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/profile'
     | '/chat/$userId'
+    | '/u/$userId'
     | '/chat/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -110,6 +120,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/profile'
     | '/chat/$userId'
+    | '/u/$userId'
     | '/chat'
   id:
     | '__root__'
@@ -120,6 +131,7 @@ export interface FileRouteTypes {
     | '/marketplace'
     | '/profile'
     | '/chat/$userId'
+    | '/u/$userId'
     | '/chat/'
   fileRoutesById: FileRoutesById
 }
@@ -131,6 +143,7 @@ export interface RootRouteChildren {
   MarketplaceRoute: typeof MarketplaceRoute
   ProfileRoute: typeof ProfileRoute
   ChatUserIdRoute: typeof ChatUserIdRoute
+  UUserIdRoute: typeof UUserIdRoute
   ChatIndexRoute: typeof ChatIndexRoute
 }
 
@@ -192,6 +205,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ChatUserIdRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/u/$userId': {
+      id: '/u/$userId'
+      path: '/u/$userId'
+      fullPath: '/u/$userId'
+      preLoaderRoute: typeof UUserIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
   }
 }
 
@@ -203,6 +223,7 @@ const rootRouteChildren: RootRouteChildren = {
   MarketplaceRoute: MarketplaceRoute,
   ProfileRoute: ProfileRoute,
   ChatUserIdRoute: ChatUserIdRoute,
+  UUserIdRoute: UUserIdRoute,
   ChatIndexRoute: ChatIndexRoute,
 }
 export const routeTree = rootRouteImport
