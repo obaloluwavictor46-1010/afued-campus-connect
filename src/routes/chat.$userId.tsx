@@ -5,7 +5,7 @@ import { ArrowLeft, Check, CheckCheck, Loader2, Mic, Paperclip, Send, Square } f
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { FileChip, UploadBar } from "@/components/MediaView";
-import { kindOfFile, supabase, uploadFile, type Profile } from "@/lib/supabase";
+import { checkVideo, kindOfFile, supabase, uploadFile, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 import { useOnline } from "@/lib/presence";
 
@@ -90,6 +90,7 @@ function Thread() {
   const sendFile = async (file: Blob, name: string, ext?: string) => {
     setBusy(true);
     try {
+      await checkVideo(file);
       const type = kindOfFile(file);
       const url = await uploadFile(Object.assign(file, { name }), "chat-attachments", me, ext, setPct);
       await send({ media_url: url, media_type: type, file_name: name });

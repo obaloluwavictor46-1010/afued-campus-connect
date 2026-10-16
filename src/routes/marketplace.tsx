@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { MediaGallery, UploadBar, useMediaPicker } from "@/components/MediaView";
-import { fetchProfiles, insertWithMedia, kindOfUrl, mediaOf, supabase, uploadMany, type Profile } from "@/lib/supabase";
+import { fetchProfiles, insertWithMedia, kindOfUrl, MARKETPLACE_TTL_DAYS, mediaOf, supabase, uploadMany, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/marketplace")({
@@ -55,8 +55,13 @@ function Market() {
   const load = async () => {
     const { data, error } = await supabase.from("marketplace_items").select("*").order("created_at", { ascending: false });
     if (error) toast.error(error.message);
-    setItems((data ?? []) as Item[]);
-    setSellers(await fetchProfiles((data ?? []).map((i: Item) => i.seller_id)));
+    const cutoff = Date.now() - MARKETPLACE_TTL_DAYS * 24 * 60 * 60 * 1000;
+    const all = (data ?? []) as Item[];
+    const expired = all.filter((i) => new Date(i.created_at).getTime() < cutoff);
+    const fresh = all.filter((i) => new Date(i.created_at).getTime() >= cutoff);
+    if (expired.length) supabase.from("marketplace_items").delete().in("id", expired.map((i) => i.id)).then(() => {});
+    setItems(fresh);
+    setSellers(await fetchProfiles(fresh.map((i) => i.seller_id)));
     setLoading(false);
   };
   useEffect(() => {
@@ -135,7 +140,7 @@ function Market() {
 function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded: () => void }) {
   const { user, profile } = useAuth();
   const [f, setF] = useState({ title: "", description: "", price: "", whatsapp_number: "" });
-  const picker = useMediaPicker(100);
+  const picker = useMediaPicker();
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
   useEffect(() => { if (open && !f.whatsapp_number && profile?.phone_number) setF((x) => ({ ...x, whatsapp_number: profile.phone_number ?? "" })); }, [open]);
@@ -163,7 +168,7 @@ function AddItem({ open, onClose, onAdded }: { open: boolean; onClose: () => voi
           <textarea rows={3} placeholder="Description" className={field} value={f.description} onChange={(e) => setF({ ...f, description: e.target.value })} />
           {picker.input}
           <button type="button" onClick={picker.open} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-semibold text-primary">
-            <ImagePlus className="h-5 w-5" /> Add up to 15 photos or videos (video max 100MB)
+            <ImagePlus className="h-5 w-5" /> Add up to 5 photos, videos or files (video max 1 min / 30MB)
           </button>
           {picker.grid(busy)}
           <UploadBar pct={pct} />

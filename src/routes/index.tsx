@@ -6,7 +6,7 @@ import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
 import { UploadBar, useMediaPicker } from "@/components/MediaView";
-import { FEED_CHANNELS, fetchProfiles, insertWithMedia, shortFaculty, supabase, uploadMany, type Post, type Profile } from "@/lib/supabase";
+import { FEED_CHANNELS, fetchProfiles, insertWithMedia, MAX_POSTS_PER_DAY, shortFaculty, supabase, uploadMany, type Post, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -89,7 +89,7 @@ function FeedInner() {
 function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPosted: () => void }) {
   const { user, profile } = useAuth();
   const [content, setContent] = useState("");
-  const picker = useMediaPicker(50);
+  const picker = useMediaPicker();
   const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]!);
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
@@ -98,6 +98,14 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const post = async () => {
     if (!user || (!content.trim() && !picker.files.length)) return;
     setBusy(true);
+    const since = new Date(); since.setHours(0, 0, 0, 0);
+    const { count } = await supabase.from("posts").select("id", { count: "exact", head: true })
+      .eq("user_id", user.id).gte("created_at", since.toISOString());
+    if ((count ?? 0) >= MAX_POSTS_PER_DAY) {
+      toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`);
+      setBusy(false);
+      return;
+    }
     try {
       const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
       await insertWithMedia("posts", { user_id: user.id, content: content.trim(), faculty_channel: faculty }, urls);
