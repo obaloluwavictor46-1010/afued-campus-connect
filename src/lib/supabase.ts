@@ -5,6 +5,8 @@ const supabaseKey =
   import.meta.env["VITE_SUPABASE_ANON_KEY"] ||
   "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNpd2xqc2NjYmhleWtjbGltbWhxIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTE4MTY3MzgsImV4cCI6MjEwNzM5MjczOH0.h41kKfoXGVdk3RJEMvkwUFfC3k4g7pUTkpvX_zVzNgo";
 
+import { bunnyUpload } from "./bunny";
+
 export const supabase = createClient(supabaseUrl, supabaseKey, {
   auth: {
     persistSession: true,
@@ -58,8 +60,13 @@ export type Post = {
 
 export const MEDIA_BUCKET = "post-media";
 export const MAX_MEDIA = 15;
+export const MAX_IMAGES = 5;
 export const MAX_IMAGE = 10 * 1024 * 1024;
+export const MAX_VIDEO_MB = 30;
+export const MAX_VIDEO_SEC = 60;
 export const MAX_FILE = 50 * 1024 * 1024;
+export const MAX_POSTS_PER_DAY = 5;
+export const MARKETPLACE_TTL_DAYS = 50;
 export const MEDIA_ACCEPT = "image/*,video/mp4,video/quicktime,.mp4,.mov,.pdf,.doc,.docx";
 
 export type MediaKind = "image" | "video" | "audio" | "file";
@@ -82,10 +89,28 @@ export const mediaOf = (row: { media_urls?: string[] | null; image_url?: string 
   row.media_urls?.length ? row.media_urls : row.image_url ? [row.image_url] : [];
 
 /** Throws a friendly error if the file is too big. */
-export function checkSize(file: Blob, maxVideoMB = 50) {
+export function checkSize(file: Blob, maxVideoMB = MAX_VIDEO_MB) {
   const k = kindOfFile(file);
   const max = k === "image" ? MAX_IMAGE : k === "video" ? maxVideoMB * 1024 * 1024 : MAX_FILE;
   if (file.size > max) throw new Error(`${k === "image" ? "Image" : k === "video" ? "Video" : "File"} is too large (max ${max / 1024 / 1024}MB)`);
+}
+
+/** Throws if a video is longer than MAX_VIDEO_SEC (1 minute). */
+export async function checkVideo(file: Blob) {
+  if (!file.type.startsWith("video/")) return;
+  const url = URL.createObjectURL(file);
+  try {
+    const dur = await new Promise<number>((resolve, reject) => {
+      const v = document.createElement("video");
+      v.preload = "metadata";
+      v.onloadedmetadata = () => resolve(v.duration);
+      v.onerror = () => reject(new Error("Could not read this video"));
+      v.src = url;
+    });
+    if (dur > MAX_VIDEO_SEC + 1) throw new Error("Video is too long (max 1 minute)");
+  } finally {
+    URL.revokeObjectURL(url);
+  }
 }
 
 /** Upload many files to post-media with combined progress. */
@@ -117,17 +142,18 @@ export async function insertWithMedia(table: string, row: Record<string, unknown
 }
 
 async function compressIfImage(file: Blob & { name?: string }): Promise<Blob & { name?: string }> {
-  if (!file.type?.startsWith("image/") || file.type === "image/gif" || file.size <= 800 * 1024) return file;
+  if (!file.type?.startsWith("image/") || file.type === "image/gif") return file;
   try {
     const { default: imageCompression } = await import("browser-image-compression");
-    const out = await imageCompression(file as File, { maxSizeMB: 0.78, maxWidthOrHeight: 1920, useWebWorker: true });
-    return Object.assign(out, { name: file.name });
+    const out = await imageCompression(file as File, { maxSizeMB: 0.8, maxWidthOrHeight: 800, useWebWorker: true, fileType: "image/webp" });
+    const name = (file.name || "image").replace(/\.[^.]+$/, "") + ".webp";
+    return Object.assign(out, { name });
   } catch {
     return file;
   }
 }
 
-/** Upload with real progress (0-100) via the storage REST endpoint. */
+/** Upload with real progress (0-100) to Bunny storage; returns the public URL. */
 export async function uploadFile(
   input: Blob & { name?: string },
   bucket: string,
@@ -135,31 +161,12 @@ export async function uploadFile(
   extOverride?: string,
   onProgress?: (pct: number) => void,
 ) {
-  checkSize(input, 100);
-  onProgress?.(0);
+  checkSize(input, MAX_VIDEO_MB);
   const file = await compressIfImage(input);
   const ext = extOverride || file.name?.split(".").pop() || "bin";
   const base = (file.name || "file").replace(/\.[^.]+$/, "").replace(/[^a-zA-Z0-9_-]+/g, "_").slice(0, 60) || "file";
-  const path = `${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${base}.${ext}`;
-  const { data: s } = await supabase.auth.getSession();
-  const token = s.session?.access_token || supabaseKey;
-  await new Promise<void>((resolve, reject) => {
-    const xhr = new XMLHttpRequest();
-    xhr.open("POST", `${supabaseUrl}/storage/v1/object/${bucket}/${path}`);
-    xhr.setRequestHeader("Authorization", `Bearer ${token}`);
-    xhr.setRequestHeader("apikey", supabaseKey);
-    xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
-    xhr.setRequestHeader("x-upsert", "false");
-    xhr.setRequestHeader("cache-control", "max-age=31536000");
-    xhr.upload.onprogress = (e) => e.lengthComputable && onProgress?.(Math.min(99, Math.round((e.loaded / e.total) * 100)));
-    xhr.onload = () => {
-      if (xhr.status >= 200 && xhr.status < 300) { onProgress?.(100); resolve(); }
-      else { let m = "Upload failed"; try { m = JSON.parse(xhr.responseText).message || m; } catch { /* */ } reject(new Error(m)); }
-    };
-    xhr.onerror = () => reject(new Error("Network error during upload"));
-    xhr.send(file);
-  });
-  return supabase.storage.from(bucket).getPublicUrl(path).data.publicUrl;
+  const path = `${bucket}/${folder}/${Date.now()}-${Math.random().toString(36).slice(2, 8)}-${base}.${ext}`;
+  return bunnyUpload(path, file, onProgress);
 }
 
 export async function uploadImage(file: File, folder: string, bucket = "posts", onProgress?: (p: number) => void) {
