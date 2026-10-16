@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Download, FileText, Plus, X } from "lucide-react";
 import { toast } from "sonner";
-import { checkSize, fileNameFromUrl, kindOfUrl, MAX_MEDIA, MEDIA_ACCEPT, type MediaKind } from "@/lib/supabase";
+import { checkSize, checkVideo, fileNameFromUrl, kindOfUrl, MAX_IMAGES, MAX_MEDIA, MEDIA_ACCEPT, type MediaKind } from "@/lib/supabase";
 
 export async function downloadUrl(url: string, name?: string) {
   const fname = name || fileNameFromUrl(url);
@@ -106,17 +106,26 @@ function Thumb({ file, onRemove }: { file: File; onRemove?: (() => void) | undef
 }
 
 /** Pick up to 15 photos / videos / files with previews and remove. */
-export function useMediaPicker(maxVideoMB = 50) {
+export function useMediaPicker(maxVideoMB = 30) {
   const [files, setFiles] = useState<File[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
-  const add = (list: FileList | null) => {
+  const add = async (list: FileList | null) => {
     if (!list) return;
     const ok: File[] = [];
     for (const f of Array.from(list)) {
-      try { checkSize(f, maxVideoMB); ok.push(f); } catch (e) { toast.error((e as Error).message); }
+      try {
+        checkSize(f, maxVideoMB);
+        await checkVideo(f);
+        ok.push(f);
+      } catch (e) { toast.error((e as Error).message); }
     }
     setFiles((cur) => {
-      const next = [...cur, ...ok];
+      const isImg = (f: File) => f.type.startsWith("image/");
+      const imgRoom = Math.max(0, MAX_IMAGES - cur.filter(isImg).length);
+      let imgs = 0;
+      const accepted = ok.filter((f) => (isImg(f) ? ++imgs <= imgRoom : true));
+      if (imgs > imgRoom) toast.error(`Maximum ${MAX_IMAGES} photos per post`);
+      const next = [...cur, ...accepted];
       if (next.length > MAX_MEDIA) toast.error(`Maximum ${MAX_MEDIA} items at once`);
       return next.slice(0, MAX_MEDIA);
     });
@@ -134,7 +143,7 @@ export function useMediaPicker(maxVideoMB = 50) {
           <button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded-xl border-2 border-dashed text-muted-foreground"><Plus className="h-6 w-6" /></button>
         )}
       </div>
-      <p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} selected</p>
+      <p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} selected · max {MAX_IMAGES} photos · videos up to 1 min / 30MB</p>
     </div>
   );
   return { files, setFiles, open, input, grid, clear: () => setFiles([]) };

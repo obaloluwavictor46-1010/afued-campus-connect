@@ -99,7 +99,7 @@ function Page() {
 function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () => void }) {
   const { user } = useAuth();
   const [f, setF] = useState({ title: "", content: "" });
-  const picker = useMediaPicker(50);
+  const picker = useMediaPicker();
   const [busy, setBusy] = useState(false);
   const [pct, setPct] = useState<number | null>(null);
   const field = "w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40";
@@ -122,9 +122,9 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
           <textarea rows={5} placeholder="Write the announcement..." className={field} value={f.content} onChange={(e) => setF({ ...f, content: e.target.value })} />
           {picker.input}
           <button type="button" onClick={picker.open} disabled={busy} className="flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed py-3 text-sm font-semibold text-primary">
-            <ImagePlus className="h-5 w-5" /> Add up to 15 photos, videos or files
+            <ImagePlus className="h-5 w-5" /> Add photos, videos or files
           </button>
-          <p className="text-xs text-muted-foreground">Photos max 10MB · Videos mp4/mov max 50MB · PDF/Word</p>
+          <p className="text-xs text-muted-foreground">Max 5 photos (10MB each) · Videos mp4/mov max 1 min / 30MB · PDF/Word</p>
           {picker.grid(busy)}
           <UploadBar pct={pct} />
           <button disabled={busy} className="flex w-full justify-center rounded-2xl bg-primary py-3 font-semibold text-primary-foreground disabled:opacity-60">
