@@ -1,58 +1,56 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, useState } from "react";
-import { MessageCircle } from "lucide-react";
-import { AppShell, Avatar } from "@/components/AppShell";
-import { PostCard } from "@/components/PostCard";
-import { CommentsSheet } from "@/components/CommentsSheet";
-import { supabase, type Post, type Profile } from "@/lib/supabase";
-import { useAuth } from "@/lib/auth";
+import { createFileRoute, useNavigate } from '@tanstack/react-router'
+import { useEffect, useState } from 'react'
+import { supabase } from '../lib/supabase'
 
-export const Route = createFileRoute("/u/$userId")({
-  ssr: false,
-  head: () => ({
-    meta: [
-      { title: "Student Profile — AFUED Community" },
-      { name: "description", content: "View an AFUED student's profile and posts, and message them." },
-      { property: "og:title", content: "Student Profile — AFUED Community" },
-      { property: "og:description", content: "View an AFUED student's profile and posts." },
-      { property: "og:type", content: "profile" },
-      { name: "twitter:card", content: "summary" },
-    ],
-  }),
-  component: () => <AppShell title="Profile"><UserPage /></AppShell>,
-});
+export const Route = createFileRoute('/u/$userId')({
+  component: UserProfile,
+})
 
-function UserPage() {
-  const { userId } = Route.useParams();
-  const { user } = useAuth();
-  const navigate = useNavigate();
-  const [p, setP] = useState<Profile | null>(null);
-  const [posts, setPosts] = useState<Post[]>([]);
-  const [open, setOpen] = useState<string | null>(null);
+function UserProfile(){
+  const { userId } = Route.useParams()
+  const navigate = useNavigate()
+  const [profile, setProfile] = useState<any>(null)
+  const [posts, setPosts] = useState<any[]>([])
+  
+  useEffect(()=>{
+    async function load(){
+      const { data: p } = await supabase.from('profiles').select('*').eq('id', userId).single()
+      setProfile(p)
+      const { data: ps } = await supabase.from('posts').select('*').eq('user_id', userId).order('created_at',{ascending:false})
+      setPosts(ps||[])
+    }
+    load()
+  },[userId])
 
-  useEffect(() => {
-    if (user?.id === userId) { navigate({ to: "/profile", replace: true }); return; }
-    supabase.from("profiles").select("*").eq("id", userId).maybeSingle().then(({ data }) => setP(data as Profile));
-    supabase.from("posts").select("*").eq("user_id", userId).order("created_at", { ascending: false }).limit(50)
-      .then(({ data }) => setPosts((data ?? []) as Post[]));
-  }, [userId, user?.id]);
+  if(!profile) return <div style={{padding:20}}>Loading profile...</div>
 
   return (
-    <div className="space-y-4 p-4">
-      <div className="overflow-hidden rounded-2xl border bg-card shadow-card">
-        <div className="h-24 bg-gradient-hero" />
-        <div className="-mt-12 px-5 pb-5">
-          <div className="rounded-full bg-card p-1 w-fit"><Avatar url={p?.avatar_url} name={p?.full_name} size={88} /></div>
-          <h2 className="mt-3 font-display text-2xl font-extrabold">{p?.full_name || "AFUED Student"}</h2>
-          {p?.faculty && <span className="mt-1 inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold text-accent-foreground">{p.faculty}</span>}
-          <p className="mt-3 text-sm"><b>{posts.length}</b> posts</p>
-          <Link to="/chat/$userId" params={{ userId }} className="mt-4 flex items-center justify-center gap-2 rounded-full bg-primary py-3 font-semibold text-primary-foreground shadow-glow">
-            <MessageCircle className="h-5 w-5" /> Message
-          </Link>
-        </div>
+    <div style={{maxWidth:480, margin:'0 auto', background:'#f8fafc', minHeight:'100vh'}}>
+      <div style={{padding:12, background:'white', borderBottom:'1px solid #eee'}}>
+        <button onClick={()=>history.back()}>← Back</button>
       </div>
-      {posts.map((x) => <PostCard key={x.id} post={x} author={p ?? undefined} commentCount={0} onComments={() => setOpen(x.id)} />)}
-      <CommentsSheet postId={open} onClose={() => setOpen(null)} />
+      <div style={{background:'white', padding:20, textAlign:'center'}}>
+        <img src={profile.avatar_url || 'https://via.placeholder.com/100'} style={{width:90,height:90,borderRadius:45, border:'3px solid #2563eb'}}/>
+        <h2 style={{marginTop:10}}>{profile.full_name}</h2>
+        <p style={{color:'#64748b'}}>{profile.faculty} • {profile.email}</p>
+        <p style={{color:'#64748b'}}>{profile.phone}</p>
+        <button 
+          onClick={()=>navigate({to:'/chat/$userId', params:{userId}})}
+          style={{marginTop:14, background:'#2563eb', color:'white', border:'none', padding:'12px 28px', borderRadius:12, fontWeight:700, width:'100%'}}>
+          ✉️ Message {profile.full_name.split(' ')[0]}
+        </button>
+      </div>
+      <div style={{padding:12}}>
+        <h3>Posts by {profile.full_name.split(' ')[0]} ({posts.length})</h3>
+        {posts.map(post=>(
+          <div key={post.id} style={{background:'white', borderRadius:12, padding:12, marginTop:10}}>
+            <small style={{color:'#2563eb'}}>{post.channel} • {new Date(post.created_at).toLocaleDateString()}</small>
+            <p style={{marginTop:6}}>{post.content}</p>
+            {post.image_urls?.map((url:string,i:number)=><img key={i} src={url} style={{width:'100%', borderRadius:8, marginTop:6}}/>)}
+            {post.video_url && <video src={post.video_url} controls style={{width:'100%', borderRadius:8, marginTop:6}}/>}
+          </div>
+        ))}
+      </div>
     </div>
-  );
-}
+  )
+      }
