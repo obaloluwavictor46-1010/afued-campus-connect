@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ImagePlus, Loader2, Megaphone, Plus, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Megaphone, Plus, Trash2, Lock } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -33,6 +33,8 @@ function Page() {
   const [authors, setAuthors] = useState<Record<string, Profile>>({});
   const [loading, setLoading] = useState(true);
   const [open, setOpen] = useState(false);
+  const [showCodeDialog, setShowCodeDialog] = useState(false);
+  const [codeInput, setCodeInput] = useState("");
 
   const [loadError, setLoadError] = useState<string | null>(null);
   const load = async () => {
@@ -52,6 +54,25 @@ function Page() {
   const remove = async (id: string) => {
     const { error } = await supabase.from("announcements").delete().eq("id", id);
     if (error) toast.error(error.message); else load();
+  };
+
+  const handlePlusClick = () => {
+    if (canPost) {
+      setOpen(true);
+    } else {
+      setShowCodeDialog(true);
+    }
+  };
+
+  const verifyCode = () => {
+    if (codeInput.trim() === "1010") {
+      toast.success("Code verified — you can now post!");
+      setShowCodeDialog(false);
+      setCodeInput("");
+      setOpen(true);
+    } else {
+      toast.error("Wrong code! Enter 1010");
+    }
   };
 
   return (
@@ -86,11 +107,23 @@ function Page() {
           </article>
         ))
       )}
-      {canPost && (
-        <button onClick={() => setOpen(true)} className="fixed bottom-24 right-5 z-30 flex items-center gap-2 rounded-full bg-primary px-5 py-3.5 font-semibold text-primary-foreground shadow-glow">
-          <Plus className="h-5 w-5" /> Announce
-        </button>
-      )}
+      {/* + ICON ALWAYS VISIBLE — WITH CODE 1010 GATE */}
+      <button onClick={handlePlusClick} className="fixed bottom-24 right-5 z-30 flex items-center gap-2 rounded-full bg-primary px-5 py-3.5 font-semibold text-primary-foreground shadow-glow">
+        <Plus className="h-5 w-5" /> Announce
+      </button>
+
+      {/* CODE DIALOG — ASK FOR 1010 */}
+      <Dialog open={showCodeDialog} onOpenChange={(o) => !o && setShowCodeDialog(false)}>
+        <DialogContent className="max-w-sm rounded-2xl">
+          <DialogHeader><DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5" /> Enter Admin Code</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <p className="text-sm text-muted-foreground">Only admins with code can post announcements.</p>
+            <input type="password" placeholder="Enter code (1010)" className="w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && verifyCode()} />
+            <button onClick={verifyCode} className="flex w-full justify-center rounded-2xl bg-primary py-3 font-semibold text-primary-foreground">Verify Code</button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
       {open && <NewAnnouncement onClose={() => setOpen(false)} onDone={load} />}
     </div>
   );
@@ -110,6 +143,7 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
     try {
       const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
       await insertWithMedia("announcements", { author_id: user.id, title: f.title.trim(), content: f.content.trim() }, urls);
+      setF({ title: "", content: "" }); picker.clear();
       toast.success("Announcement posted"); onDone(); onClose();
     } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); setPct(null); }
   };
@@ -134,4 +168,4 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
       </DialogContent>
     </Dialog>
   );
-}
+            }
