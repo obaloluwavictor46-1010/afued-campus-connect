@@ -7,7 +7,7 @@ export const supabase = createClient(url, key)
 // --- FIXES FOR BUILD ---
 export const MAX_POSTS_PER_DAY = 5
 export const FEED_CHANNELS = ["general", "academics", "announcements"] as const
-
+export const FACULTIES = ["Arts", "Education", "Science", "Social Sciences", "Vocational Education"] as const
 export function shortFaculty(faculty: string) {
   if (!faculty) return "";
   return faculty.slice(0, 4).toUpperCase();
