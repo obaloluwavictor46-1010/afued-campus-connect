@@ -93,3 +93,7 @@ function AuthPage() {
     </div>
   );
 }
+export function shortFaculty(faculty: string) {
+  if (!faculty) return "";
+  return faculty.slice(0, 4).toUpperCase();
+}
