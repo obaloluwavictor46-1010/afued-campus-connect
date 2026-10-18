@@ -90,3 +90,4 @@ cd <repository-name>
 npm i
 npm run dev
 ```
+Live deployment - 2026
