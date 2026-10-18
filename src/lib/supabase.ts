@@ -9,6 +9,7 @@ export const supabase = createClient(supabaseUrl!, supabaseAnonKey!);
 export const MAX_IMAGES = 4;
 export const MAX_MEDIA = 15;
 export const MARKETPLACE_TTL_DAYS = 30;
+export const MAX_POSTS_PER_DAY = 10;
 
 export const FACULTIES = [
   "Arts",
@@ -16,6 +17,14 @@ export const FACULTIES = [
   "Science",
   "Social Sciences",
   "Vocational & Technical Education",
+] as const;
+
+export const FEED_CHANNELS = [
+  "general",
+  "academic",
+  "announcements",
+  "marketplace",
+  "lost_and_found",
 ] as const;
 
 export const LEVELS = ["100", "200", "300", "400", "500"] as const;
@@ -47,6 +56,15 @@ export function kindOfUrl(url: string): "image" | "video" | "file" {
   if (u.match(/\.(mp4|webm|mov)$/)) return "video";
   if (u.match(/\.(jpg|jpeg|png|gif|webp)$/)) return "image";
   return "file";
+}
+
+export function mediaOf(post: any): string[] {
+  if (!post) return [];
+  if (Array.isArray(post.media)) return post.media;
+  if (Array.isArray(post.media_urls)) return post.media_urls;
+  if (Array.isArray(post.images)) return post.images;
+  if (typeof post.media === 'string') return [post.media];
+  return [];
 }
 
 export function checkSize() { return true; }
