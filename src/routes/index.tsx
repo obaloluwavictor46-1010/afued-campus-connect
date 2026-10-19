@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ImagePlus, Loader2, Paperclip } from "lucide-react";
+import { ImagePlus, Loader2, Paperclip, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
@@ -27,12 +27,14 @@ function Feed() {
 }
 
 function FeedInner() {
+  const { user } = useAuth();
   const [channel, setChannel] = useState("All");
   const [posts, setPosts] = useState<Post[]>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [openPost, setOpenPost] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = async () => {
     let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50);
@@ -49,6 +51,19 @@ function FeedInner() {
       setCounts(m);
     }
     setLoading(false);
+  };
+
+  const handleDelete = async (postId: string) => {
+    if (!confirm("You wan delete this post? E go comot forever o!")) return;
+    setDeletingId(postId);
+    const { error } = await supabase.from("posts").delete().eq("id", postId);
+    if (error) {
+      toast.error(error.message);
+    } else {
+      toast.success("Post deleted!");
+      setPosts((prev) => prev.filter((p) => p.id !== postId));
+    }
+    setDeletingId(null);
   };
 
   useEffect(() => {
@@ -78,7 +93,22 @@ function FeedInner() {
         ) : posts.length === 0 ? (
           <p className="py-10 text-center text-muted-foreground">No posts in this channel yet.</p>
         ) : (
-          posts.map((p) => <PostCard key={p.id} post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />)
+          posts.map((p) => (
+            <div key={p.id} className="relative">
+              {/* DELETE BUTTON - Only show for owner */}
+              {p.user_id === user?.id && (
+                <button
+                  onClick={() => handleDelete(p.id)}
+                  disabled={deletingId === p.id}
+                  className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-500 shadow-sm hover:bg-red-500 hover:text-white disabled:opacity-50"
+                >
+                  {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
+                  Delete
+                </button>
+              )}
+              <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
+            </div>
+          ))
         )}
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
@@ -136,4 +166,4 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
       </div>
     </div>
   );
-}
+         }
