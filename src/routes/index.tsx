@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ImagePlus, Loader2, Paperclip, Trash2 } from "lucide-react";
+import { ImagePlus, Loader2, Paperclip, MoreHorizontal, Pencil, Trash2, Share2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
@@ -34,6 +34,9 @@ function FeedInner() {
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [loading, setLoading] = useState(true);
   const [openPost, setOpenPost] = useState<string | null>(null);
+  const [openMenu, setOpenMenu] = useState<string | null>(null);
+  const [editingPost, setEditingPost] = useState<Post | null>(null);
+  const [editContent, setEditContent] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
 
   const load = async () => {
@@ -57,13 +60,43 @@ function FeedInner() {
     if (!confirm("You wan delete this post? E go comot forever o!")) return;
     setDeletingId(postId);
     const { error } = await supabase.from("posts").delete().eq("id", postId);
-    if (error) {
-      toast.error(error.message);
-    } else {
+    if (error) toast.error(error.message);
+    else {
       toast.success("Post deleted!");
       setPosts((prev) => prev.filter((p) => p.id !== postId));
     }
     setDeletingId(null);
+    setOpenMenu(null);
+  };
+
+  const handleEditSave = async () => {
+    if (!editingPost || !editContent.trim()) return;
+    const { error } = await supabase.from("posts").update({ content: editContent.trim() }).eq("id", editingPost.id);
+    if (error) toast.error(error.message);
+    else {
+      toast.success("Post updated!");
+      setPosts((prev) => prev.map(p => p.id === editingPost.id ? { ...p, content: editContent.trim() } : p));
+      setEditingPost(null);
+    }
+    setOpenMenu(null);
+  };
+
+  const handleShare = async (post: Post) => {
+    const url = `${window.location.origin}/post/${post.id}?from=AFUED_Connect`;
+    const shareData = {
+      title: "AFUED Community",
+      text: `${post.content.slice(0, 100)} - Shared from AFUED Connect App 🎓`,
+      url: url,
+    };
+    try {
+      if (navigator.share) {
+        await navigator.share(shareData);
+      } else {
+        await navigator.clipboard.writeText(url);
+        toast.success("Link copied! Share am for WhatsApp with AFUED flag 🎓");
+      }
+    } catch {}
+    setOpenMenu(null);
   };
 
   useEffect(() => {
@@ -76,6 +109,12 @@ function FeedInner() {
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [channel]);
+
+  useEffect(() => {
+    const close = () => setOpenMenu(null);
+    window.addEventListener("click", close);
+    return () => window.removeEventListener("click", close);
+  }, []);
 
   return (
     <>
@@ -95,23 +134,55 @@ function FeedInner() {
         ) : (
           posts.map((p) => (
             <div key={p.id} className="relative">
-              {/* DELETE BUTTON - Only show for owner */}
-              {p.user_id === user?.id && (
+              {/* 3 DOTS MENU */}
+              <div className="absolute right-3 top-3 z-10">
                 <button
-                  onClick={() => handleDelete(p.id)}
-                  disabled={deletingId === p.id}
-                  className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-full border border-red-200 bg-white px-3 py-1 text-xs font-medium text-red-500 shadow-sm hover:bg-red-500 hover:text-white disabled:opacity-50"
+                  onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === p.id ? null : p.id); }}
+                  className="flex h-8 w-8 items-center justify-center rounded-full bg-white border shadow-sm hover:bg-muted"
                 >
-                  {deletingId === p.id ? <Loader2 className="h-3 w-3 animate-spin" /> : <Trash2 className="h-3 w-3" />}
-                  Delete
+                  <MoreHorizontal className="h-4 w-4" />
                 </button>
-              )}
+                {openMenu === p.id && (
+                  <div className="absolute right-0 mt-2 w-48 rounded-xl border bg-white shadow-xl overflow-hidden animate-in fade-in">
+                    {/* SHARE - Everyone can see */}
+                    <button onClick={(e) => { e.stopPropagation(); handleShare(p); }} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-muted text-left">
+                      <Share2 className="h-4 w-4" /> Share / Invite
+                    </button>
+                    {/* EDIT & DELETE - Only owner */}
+                    {p.user_id === user?.id && (
+                      <>
+                        <div className="h-[1px] bg-gray-100" />
+                        <button onClick={(e) => { e.stopPropagation(); setEditingPost(p); setEditContent(p.content); setOpenMenu(null); }} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-muted text-left">
+                          <Pencil className="h-4 w-4" /> Edit Post
+                        </button>
+                        <button onClick={(e) => { e.stopPropagation(); handleDelete(p.id); }} disabled={deletingId === p.id} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-red-50 text-red-500 text-left disabled:opacity-50">
+                          {deletingId === p.id ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />} Delete Post
+                        </button>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
               <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
             </div>
           ))
         )}
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
+
+      {/* EDIT MODAL */}
+      {editingPost && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
+            <h3 className="font-bold mb-3 text-lg">Edit Post</h3>
+            <textarea value={editContent} onChange={(e) => setEditContent(e.target.value)} rows={4} className="w-full rounded-xl border p-3 text-[15px] outline-none focus:ring-2 focus:ring-primary" placeholder="Edit your post..." />
+            <div className="mt-4 flex justify-end gap-2">
+              <button onClick={() => setEditingPost(null)} className="rounded-full px-5 py-2 text-sm bg-muted font-medium">Cancel</button>
+              <button onClick={handleEditSave} className="rounded-full bg-primary px-6 py-2 text-sm font-semibold text-white">Save Changes</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }
@@ -123,28 +194,19 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const [faculty, setFaculty] = useState<string>(FEED_CHANNELS.includes(profile?.faculty as never) ? profile!.faculty! : FEED_CHANNELS[0]!);
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
-
   const [pct, setPct] = useState<number | null>(null);
   const post = async () => {
     if (!user || (!content.trim() && !picker.files.length)) return;
     setBusy(true);
     const since = new Date(); since.setHours(0, 0, 0, 0);
-    const { count } = await supabase.from("posts").select("id", { count: "exact", head: true })
-      .eq("user_id", user.id).gte("created_at", since.toISOString());
-    if ((count ?? 0) >= MAX_POSTS_PER_DAY) {
-      toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`);
-      setBusy(false);
-      return;
-    }
+    const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
+    if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); setBusy(false); return; }
     try {
       const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
       await insertWithMedia("posts", { user_id: user.id, content: content.trim(), faculty_channel: faculty }, urls);
-      setContent(""); picker.clear();
-      toast.success("Posted!");
-      onPosted();
+      setContent(""); picker.clear(); toast.success("Posted!"); onPosted();
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
   };
-
   return (
     <div className="rounded-2xl border bg-card p-4 shadow-card">
       <div className="flex gap-3">
@@ -166,4 +228,4 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
       </div>
     </div>
   );
-         }
+  }
