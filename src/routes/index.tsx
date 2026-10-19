@@ -1,12 +1,13 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { ImagePlus, Loader2, Paperclip, MoreHorizontal, Pencil, Trash2, Share2 } from "lucide-react";
+import { ImagePlus, Loader2, Paperclip, MoreHorizontal, Pencil, Trash2, Share2, Music } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
 import { UploadBar, useMediaPicker } from "@/components/MediaView";
-import { FEED_CHANNELS, fetchProfiles, insertWithMedia, MAX_POSTS_PER_DAY, shortFaculty, supabase, uploadMany, type Post, type Profile } from "@/lib/supabase";
+import { FEED_CHANNELS, fetchProfiles, MAX_POSTS_PER_DAY, shortFaculty, supabase, type Post, type Profile } from "@/lib/supabase";
+import { uploadToBunny } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -134,7 +135,6 @@ function FeedInner() {
         ) : (
           posts.map((p) => (
             <div key={p.id} className="relative">
-              {/* 3 DOTS MENU */}
               <div className="absolute right-3 top-3 z-10">
                 <button
                   onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === p.id ? null : p.id); }}
@@ -144,11 +144,9 @@ function FeedInner() {
                 </button>
                 {openMenu === p.id && (
                   <div className="absolute right-0 mt-2 w-48 rounded-xl border bg-white shadow-xl overflow-hidden animate-in fade-in">
-                    {/* SHARE - Everyone can see */}
                     <button onClick={(e) => { e.stopPropagation(); handleShare(p); }} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-muted text-left">
                       <Share2 className="h-4 w-4" /> Share / Invite
                     </button>
-                    {/* EDIT & DELETE - Only owner */}
                     {p.user_id === user?.id && (
                       <>
                         <div className="h-[1px] bg-gray-100" />
@@ -170,7 +168,6 @@ function FeedInner() {
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
 
-      {/* EDIT MODAL */}
       {editingPost && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
@@ -195,6 +192,8 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
   const [pct, setPct] = useState<number | null>(null);
+
+  // NEW BUNNY UPLOAD - NO MORE HANG!
   const post = async () => {
     if (!user || (!content.trim() && !picker.files.length)) return;
     setBusy(true);
@@ -202,23 +201,61 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); setBusy(false); return; }
     try {
-      const urls = picker.files.length ? await uploadMany(picker.files, user.id, setPct) : [];
-      await insertWithMedia("posts", { user_id: user.id, content: content.trim(), faculty_channel: faculty }, urls);
-      setContent(""); picker.clear(); toast.success("Posted!"); onPosted();
+      let image_urls: string[] = [];
+      let music_url = "";
+      let video_url = "";
+      
+      for (let i = 0; i < picker.files.length; i++) {
+        const file: any = picker.files[i];
+        setPct(Math.round(((i+1)/picker.files.length)*100));
+        
+        const name = file.name?.toLowerCase() || "";
+        const type = file.type || "";
+        const isMusic = type.startsWith("audio/") || name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav");
+        const isVideo = type.startsWith("video/");
+        
+        if (isMusic) {
+          music_url = await uploadToBunny(file, "music");
+        } else if (isVideo) {
+          video_url = await uploadToBunny(file, "videos");
+        } else {
+          const url = await uploadToBunny(file, "images");
+          image_urls.push(url);
+        }
+      }
+
+      const { error } = await supabase.from("posts").insert({
+        user_id: user.id,
+        content: content.trim(),
+        faculty_channel: faculty,
+        image_urls: image_urls,
+        image_url: image_urls[0] || "",
+        music_url: music_url,
+        video_url: video_url,
+      } as any);
+      
+      if (error) throw error;
+      
+      setContent(""); picker.clear(); toast.success("Posted! Bunny don upload am fast! 🚀"); onPosted();
     } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
   };
+
   return (
     <div className="rounded-2xl border bg-card p-4 shadow-card">
       <div className="flex gap-3">
         <Avatar url={profile?.avatar_url} name={profile?.full_name} />
-        <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="What's happening on campus?" rows={2} className="flex-1 resize-none bg-transparent pt-2 text-[15px] outline-none" />
+        <textarea value={content} onChange={(e) => setContent(e.target.value)} placeholder="What's happening on campus? Add pic + music 🎵" rows={2} className="flex-1 resize-none bg-transparent pt-2 text-[15px] outline-none" />
       </div>
       {picker.grid(busy)}
       <UploadBar pct={pct} />
       <div className="mt-3 flex items-center gap-2 border-t pt-3">
         {picker.input}
-        <button onClick={picker.open} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add photos or videos"><ImagePlus className="h-5 w-5" /></button>
-        <button onClick={picker.open} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add file"><Paperclip className="h-5 w-5" /></button>
+        <button onClick={picker.open} disabled={busy} className="rounded-full p-2 text-primary hover:bg-accent" aria-label="Add photos, videos or music">
+          <ImagePlus className="h-5 w-5" />
+        </button>
+        <button onClick={picker.open} disabled={busy} className="flex items-center gap-1 rounded-full p-2 text-primary hover:bg-accent" aria-label="Add music">
+          <Music className="h-4 w-4" /><span className="text-[10px] font-bold">MP3</span>
+        </button>
         <select value={faculty} onChange={(e) => setFaculty(e.target.value)} className="min-w-0 flex-1 truncate rounded-full bg-muted px-3 py-2 text-xs font-medium outline-none">
           {FEED_CHANNELS.map((f) => <option key={f} value={f}>{shortFaculty(f)}</option>)}
         </select>
