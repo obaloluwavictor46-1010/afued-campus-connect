@@ -1,19 +1,39 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Heart, MessageCircle } from "lucide-react";
+import { Heart, MessageCircle, Play, Pause, Music2 } from "lucide-react";
 import { Avatar } from "./AppShell";
 import { mediaOf, shortFaculty, type Post, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
 
-export function PostCard({ post, author, commentCount, onComments }: { post: Post; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
+export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const key = `afued-like-${post.id}`;
   const [liked, setLiked] = useState(false);
+  const [playing, setPlaying] = useState(false);
+  const audioRef = useRef<HTMLAudioElement>(null);
+  
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
+  
   const toggle = () => {
     localStorage.setItem(key, liked ? "0" : "1");
     setLiked(!liked);
   };
+
+  const musicUrl = (post as any).music_url as string | undefined;
+  const videoUrl = (post as any).video_url as string | undefined;
+  const imageUrls = mediaOf(post);
+
+  const togglePlay = () => {
+    if (!audioRef.current) return;
+    if (playing) {
+      audioRef.current.pause();
+      setPlaying(false);
+    } else {
+      audioRef.current.play();
+      setPlaying(true);
+    }
+  };
+
   return (
     <article className="overflow-hidden rounded-2xl border bg-card shadow-card">
       <div className="flex items-center gap-3 p-4">
@@ -31,7 +51,46 @@ export function PostCard({ post, author, commentCount, onComments }: { post: Pos
         )}
       </div>
       {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
-      <MediaGallery urls={mediaOf(post)} />
+      
+      {/* Images / Videos */}
+      <div className="relative">
+        <MediaGallery urls={imageUrls} />
+        {/* If get music + image, show play button on top image */}
+        {musicUrl && imageUrls.length > 0 && (
+          <button 
+            onClick={togglePlay}
+            className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-white backdrop-blur text-xs font-semibold hover:bg-black/80"
+          >
+            {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
+            <Music2 className="h-3 w-3" />
+            {playing ? "Pause music" : "Play music"}
+          </button>
+        )}
+      </div>
+
+      {/* Video URL from Bunny */}
+      {videoUrl && !imageUrls.length && (
+        <video src={videoUrl} controls className="w-full max-h-[480px] bg-black" />
+      )}
+
+      {/* Music player when ONLY music (no image) */}
+      {musicUrl && imageUrls.length === 0 && !videoUrl && (
+        <div className="mx-4 mb-3 flex items-center gap-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 p-3 border">
+          <button onClick={togglePlay} className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow">
+            {playing ? <Pause className="h-5 w-5" /> : <Play className="h-5 w-5 ml-0.5" />}
+          </button>
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-bold flex items-center gap-1"><Music2 className="h-3 w-3" /> Music attached</p>
+            <p className="text-[11px] text-muted-foreground truncate">Tap to play vibe 🎵</p>
+          </div>
+        </div>
+      )}
+
+      {/* Hidden audio */}
+      {musicUrl && (
+        <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />
+      )}
+
       <div className="flex items-center gap-5 px-4 py-3">
         <button onClick={toggle} className="flex items-center gap-1.5 text-sm font-medium">
           <Heart className={`h-6 w-6 transition ${liked ? "fill-like text-like scale-110" : ""}`} />
@@ -40,7 +99,8 @@ export function PostCard({ post, author, commentCount, onComments }: { post: Pos
         <button onClick={onComments} className="flex items-center gap-1.5 text-sm font-medium">
           <MessageCircle className="h-6 w-6" /> {commentCount}
         </button>
+        {musicUrl && <span className="ml-auto flex items-center gap-1 text-[11px] text-primary font-bold"><Music2 className="h-3 w-3" /> MP3</span>}
       </div>
     </article>
   );
-}
+        }
