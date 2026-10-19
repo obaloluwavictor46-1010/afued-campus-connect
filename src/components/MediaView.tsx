@@ -47,13 +47,34 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
+// --- THIS IS THE FIX FOR VIDEO AUTO-PAUSE ---
 export function MediaView({ url, kind, name, className }: { url: string, kind?: MediaKind, name?: string, className?: string }) {
   const k = (kind as MediaKind) || kindOfUrl(url)
+  const videoRef = useRef<HTMLVideoElement>(null)
+
+  useEffect(() => {
+    if (k !== "video") return
+    const video = videoRef.current
+    if (!video) return
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) {
+            video.pause()
+          }
+        })
+      },
+      { threshold: 0.5 }
+    )
+    observer.observe(video)
+    return () => observer.disconnect()
+  }, [k, url])
+
   if (k === "file") return <FileChip url={url} name={name} className={className} />
   return (
     <div className={`relative ${className}`}>
       {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" />}
-      {k === "video" && <video src={url} controls className="w-full rounded" />}
+      {k === "video" && <video ref={videoRef} src={url} controls playsInline preload="metadata" className="w-full rounded bg-black" />}
       {k === "audio" && <audio src={url} controls className="w-full" />}
       {k !== "audio" && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white" />}
     </div>
@@ -135,4 +156,4 @@ export function useMediaPicker(maxVideoMB = 30) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-                            }
+}
