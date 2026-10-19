@@ -7,7 +7,7 @@ import { Switch } from "@/components/ui/switch";
 import { supabase, type Profile } from "@/lib/supabase";
 import { useAuth } from "@/lib/auth";
 
-export const Route = createFileRoute("/admin")({
+export const Route = createFileRoute("/afued-oga-only-2024-x9")({
   ssr: false,
   head: () => ({
     meta: [
@@ -66,7 +66,6 @@ function Admin() {
 
   return (
     <div className="space-y-4 p-4 pb-20">
-      {/* NEW STATS - ONLY YOU SEE */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <div className="bg-blue-600 text-white p-4 rounded-2xl"><div className="text-2xl font-bold">{stats.total}</div><div className="text-sm">Total Users</div></div>
         <div className="bg-green-600 text-white p-4 rounded-2xl"><div className="text-2xl font-bold">{stats.today}</div><div className="text-sm">Today Joined</div></div>
@@ -110,4 +109,4 @@ function Admin() {
       )}
     </div>
   );
-                                                                    }
+                           }
