@@ -6,7 +6,7 @@ import { toast } from "sonner"
 export const MAX_IMAGES = 4
 export const MAX_MEDIA = 15
 
-export function checkSize(f: File, maxVideoMB = 30) {
+export function checkSize(f: File, maxVideoMB = 500) {
   const max = f.type.startsWith("video/") ? maxVideoMB * 1024 * 1024 : 5 * 1024 * 1024
   if (f.size > max) throw new Error(f.type.startsWith("video/") ? `Video too big (max ${maxVideoMB}MB)` : "Image too big (max 5MB)")
 }
@@ -131,7 +131,7 @@ function Thumb({ file, onRemove }: { file: File, onRemove?: () => void }) {
   )
 }
 
-export function useMediaPicker(maxVideoMB = 30) {
+export function useMediaPicker(maxVideoMB = 500) {
   const [files, setFiles] = useState<File[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const add = async (list: FileList | null) => {
@@ -156,4 +156,4 @@ export function useMediaPicker(maxVideoMB = 30) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-}
+    }
