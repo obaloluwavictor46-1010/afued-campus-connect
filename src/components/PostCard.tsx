@@ -3,7 +3,7 @@ import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Heart, MessageCircle, Play, Pause, Music2 } from "lucide-react";
 import { Avatar } from "./AppShell";
-import { mediaOf, shortFaculty, type Post, type Profile } from "@/lib/supabase";
+import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
 
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
@@ -21,7 +21,24 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
 
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
-  const imageUrls = mediaOf(post);
+  
+  // --- FIXED BUNNY IMAGE PARSER - NO MORE mediaOf ---
+  let imageUrls: string[] = [];
+  try {
+    const raw = post.image_urls || post.image_url || [];
+    if (typeof raw === 'string') {
+      const parsed = JSON.parse(raw);
+      imageUrls = Array.isArray(parsed) ? parsed : [parsed];
+    } else if (Array.isArray(raw)) {
+      imageUrls = raw;
+    } else if (typeof raw === 'string' && raw.startsWith('http')) {
+      imageUrls = [raw];
+    }
+  } catch {
+    const raw = post.image_urls || post.image_url || "";
+    if (typeof raw === 'string' && raw.startsWith('http')) imageUrls = [raw];
+  }
+  imageUrls = imageUrls.filter((u: any) => typeof u === 'string' && u.startsWith('http'));
 
   const togglePlay = () => {
     if (!audioRef.current) return;
@@ -52,10 +69,8 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
       {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
       
-      {/* Images / Videos */}
       <div className="relative">
         <MediaGallery urls={imageUrls} />
-        {/* If get music + image, show play button on top image */}
         {musicUrl && imageUrls.length > 0 && (
           <button 
             onClick={togglePlay}
@@ -68,12 +83,10 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         )}
       </div>
 
-      {/* Video URL from Bunny */}
       {videoUrl && !imageUrls.length && (
         <video src={videoUrl} controls className="w-full max-h-[480px] bg-black" />
       )}
 
-      {/* Music player when ONLY music (no image) */}
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
         <div className="mx-4 mb-3 flex items-center gap-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 p-3 border">
           <button onClick={togglePlay} className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow">
@@ -86,7 +99,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         </div>
       )}
 
-      {/* Hidden audio */}
       {musicUrl && (
         <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />
       )}
@@ -103,4 +115,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-        }
+}
