@@ -1,36 +1,32 @@
-export async function uploadToBunny(file: File): Promise<string> {
-  const endpoint = import.meta.env.VITE_BUNNY_ENDPOINT as string // https://de.storage.bunnycdn.com/afued-storage
-  const publicUrl = import.meta.env.VITE_BUNNY_PUBLIC_URL as string
-  const accessKey = import.meta.env.VITE_BUNNY_ACCESS_KEY as string
-  
-  // Clean file name make e no get space
-  const fileName = Date.now() + '-' + file.name.replace(/[^a-zA-Z0-9.-]/g,'')
-  
-  const res = await fetch(`${endpoint}/${fileName}`, {
-    method: 'PUT',
-    headers: { 
-      'AccessKey': accessKey, 
-      'Content-Type': file.type || 'application/octet-stream' 
-    },
-    body: file
-  })
-  
-  if(!res.ok) {
-    const err = await res.text()
-    console.error(err)
-    throw new Error('Bunny upload failed: ' + err)
+const BUNNY_ENDPOINT = import.meta.env.VITE_BUNNY_ENDPOINT;
+const BUNNY_PUBLIC_URL = import.meta.env.VITE_BUNNY_PUBLIC_URL;
+const BUNNY_ACCESS_KEY = import.meta.env.VITE_BUNNY_ACCESS_KEY;
+
+export const uploadToBunny = async (file: File, folder: string = "videos"): Promise<string> => {
+  if (!file) throw new Error("No file selected");
+
+  // New limit: 500MB instead of 30MB
+  const MAX_SIZE = 500 * 1024 * 1024;
+  if (file.size > MAX_SIZE) {
+    throw new Error("Video too big (max 500MB)");
   }
-  
-  return `${publicUrl}/${fileName}`
-}
 
-export function validateVideo(file: File){
-  // Before na 30MB, now we allow up to 500MB because na Bunny
-  if(file.size > 500*1024*1024) throw new Error('Video too big - max 500MB')
-  return true
-}
+  const fileName = `${folder}/${Date.now()}-${file.name.replace(/\s/g, "_")}`;
+  const url = `${BUNNY_ENDPOINT}/${fileName}`;
 
-export function validateAudio(file: File){
-  if(file.size > 200*1024*1024) throw new Error('Audio too big - max 200MB')
-  return true
-}
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "AccessKey": BUNNY_ACCESS_KEY,
+      "Content-Type": file.type || "application/octet-stream",
+    },
+    body: file,
+  });
+
+  if (!response.ok) {
+    const text = await response.text();
+    throw new Error(`Bunny upload failed: ${response.status} - ${text}`);
+  }
+
+  return `${BUNNY_PUBLIC_URL}/${fileName}`;
+};
