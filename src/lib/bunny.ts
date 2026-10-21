@@ -18,12 +18,21 @@ export const uploadToBunny = async (
 ): Promise<string> => {
   if (!file) throw new Error("No file selected");
 
-  if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !STREAM_LIB_ID || !STREAM_API_KEY) {
-    throw new Error("Bunny keys missing for .env - check Vercel settings");
+  // FIX: Check keys separately - video no need Storage, picture no need Stream
+  const isVideoFile = folder === "videos" || file.type.startsWith("video/");
+  
+  if (isVideoFile) {
+    if (!STREAM_LIB_ID || !STREAM_API_KEY) {
+      throw new Error("Stream keys missing - add VITE_BUNNY_STREAM_LIBRARY_ID & VITE_BUNNY_STREAM_API_KEY to Vercel");
+    }
+  } else {
+    if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
+      throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
+    }
   }
 
   // 1. VIDEO = Go STREAM (Bunny go compress to small size automatically - GOOD)
-  if (folder === "videos" || file.type.startsWith("video/")) {
+  if (isVideoFile) {
     
     // Check 3 mins = 180 sec for channel/group
     const duration = await new Promise<number>((resolve) => {
