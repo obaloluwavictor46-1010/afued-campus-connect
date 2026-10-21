@@ -1,4 +1,4 @@
-// FINAL BUNNY.TS - AFUED - 0-45s INSTANT, 50s+ STREAM, 3 MINS MAX
+// FINAL BUNNY.TS - AFUED - 0-45s INSTANT + WhatsApp FAST COMPRESS + 3 MINS MAX
 // Copy everything comot old one, paste this
 
 const BUNNY_ENDPOINT = import.meta.env.VITE_BUNNY_ENDPOINT;
@@ -28,6 +28,111 @@ function getVideoDuration(file: File): Promise<number> {
   });
 }
 
+// WHATSAPP FAST COMPRESS - 120MB -> 8MB for phone before upload
+async function compressVideoIfNeeded(file: File, onProgress?: ProgressCb): Promise<File> {
+  if (!file.type.startsWith("video/")) return file;
+  if (file.size < 12 * 1024 * 1024) return file; // small already
+
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.muted = true;
+    video.playsInline = true;
+    video.src = URL.createObjectURL(file);
+    let revoked = false;
+    const cleanup = () => {
+      if (!revoked) {
+        URL.revokeObjectURL(video.src);
+        revoked = true;
+      }
+    };
+
+    video.onloadedmetadata = () => {
+      const MAX_W = 720; // TikTok/WhatsApp size
+      let w = video.videoWidth;
+      let h = video.videoHeight;
+      if (w > MAX_W) {
+        h = Math.round((h * MAX_W) / w);
+        w = MAX_W;
+      }
+      if (h > 1280) {
+        w = Math.round((w * 1280) / h);
+        h = 1280;
+      }
+
+      const canvas = document.createElement("canvas");
+      canvas.width = w;
+      canvas.height = h;
+      const ctx = canvas.getContext("2d")!;
+      const canvasStream = canvas.captureStream(30);
+
+      try {
+        const vStream = (video as any).captureStream?.() || (video as any).mozCaptureStream?.();
+        if (vStream) {
+          vStream.getAudioTracks().forEach((t: MediaStreamTrack) => canvasStream.addTrack(t));
+        }
+      } catch {}
+
+      const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
+        ? "video/webm;codecs=vp9,opus"
+        : "video/webm";
+
+      const recorder = new MediaRecorder(canvasStream, {
+        mimeType: mime,
+        videoBitsPerSecond: 1_200_000, // 1.2Mbps like WhatsApp
+      });
+
+      const chunks: Blob[] = [];
+      recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
+      recorder.onstop = () => {
+        cleanup();
+        if (chunks.length === 0) {
+          resolve(file);
+          return;
+        }
+        const blob = new Blob(chunks, { type: mime });
+        if (blob.size >= file.size) resolve(file);
+        else resolve(new File([blob], file.name.replace(/\.\w+$/, ".webm"), { type: mime }));
+      };
+
+      video.onended = () => { if (recorder.state === "recording") recorder.stop(); };
+
+      video.play().then(() => {
+        recorder.start(200);
+        if (onProgress) onProgress(3);
+        const draw = () => {
+          if (video.paused || video.ended) return;
+          ctx.drawImage(video, 0, 0, w, h);
+          requestAnimationFrame(draw);
+        };
+        draw();
+      }).catch(() => {
+        cleanup();
+        resolve(file);
+      });
+
+      setTimeout(() => {
+        if (recorder.state === "recording") {
+          video.pause();
+          recorder.stop();
+        }
+      }, (video.duration + 3) * 1000);
+    };
+
+    video.onerror = () => {
+      cleanup();
+      resolve(file);
+    };
+
+    setTimeout(() => {
+      if (video.readyState === 0) {
+        cleanup();
+        resolve(file);
+      }
+    }, 3000);
+  });
+}
+
 // This na the main function wey your app dey call
 export const uploadToBunny = async (
   file: File,
@@ -35,6 +140,12 @@ export const uploadToBunny = async (
   onProgress?: ProgressCb
 ): Promise<string> => {
   if (!file) throw new Error("No file selected");
+
+  // 1. WHATSAPP COMPRESS FIRST - Make upload fast for Ibadan network!
+  if (file.type.startsWith("video/") && file.size > 10 * 1024 * 1024) {
+    if (onProgress) onProgress(1);
+    file = await compressVideoIfNeeded(file, onProgress);
+  }
 
   const isVideoFile = folder === "videos" || file.type.startsWith("video/");
   const duration = isVideoFile ? await getVideoDuration(file) : 0;
@@ -44,8 +155,7 @@ export const uploadToBunny = async (
     throw new Error(`Video too long! Max 3 mins. Yours na ${Math.round(duration)}s`);
   }
 
-  // --- NEW LOGIC LIKE FACEBOOK ---
-  // 0-45 sec = INSTANT STORAGE (No Processing!)
+  // 0-45 sec = INSTANT STORAGE (No Processing!) - FAST LIKE FACEBOOK
   const isShortVideo = isVideoFile && duration <= 45;
 
   if (isShortVideo) {
@@ -82,7 +192,6 @@ export const uploadToBunny = async (
       throw new Error("Stream keys missing - add VITE_BUNNY_STREAM_LIBRARY_ID & VITE_BUNNY_STREAM_API_KEY to Vercel");
     }
 
-    // Create video for Stream
     const createRes = await fetch(`https://video.bunnycdn.com/library/${STREAM_LIB_ID}/videos`, {
       method: 'POST',
       headers: { 
@@ -99,7 +208,6 @@ export const uploadToBunny = async (
     
     const { guid: videoId } = await createRes.json();
 
-    // Upload original file - Bunny go handle compress
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', `https://video.bunnycdn.com/library/${STREAM_LIB_ID}/videos/${videoId}`);
@@ -117,11 +225,10 @@ export const uploadToBunny = async (
       xhr.send(file);
     });
 
-    // Return embed - YOU MUST USE <iframe> for this, not <video>!
     return `https://iframe.mediadelivery.net/embed/${STREAM_LIB_ID}/${videoId}`;
   }
 
-  // VOICE / PICTURE / CAR / DOC = Go STORAGE (no compress)
+  // VOICE / PICTURE / CAR / DOC = Go STORAGE
   if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
     throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
   }
@@ -149,13 +256,11 @@ export const uploadToBunny = async (
   });
 };
 
-// Helper to get play URL
 export const getBunnyStreamPlayUrl = (idOrUrl: string) => {
   if (idOrUrl.includes('iframe.mediadelivery.net')) return idOrUrl;
   return `https://iframe.mediadelivery.net/embed/${STREAM_LIB_ID}/${idOrUrl}`;
 };
 
-// BOLD VOICE - No radio sound
 export const startBoldVoiceRecording = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
@@ -170,7 +275,7 @@ export const startBoldVoiceRecording = async () => {
   const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
   const source = audioCtx.createMediaStreamSource(stream);
   const gain = audioCtx.createGain();
-  gain.gain.value = 2.5; // bold like WhatsApp
+  gain.gain.value = 2.5;
   const dest = audioCtx.createMediaStreamDestination();
   source.connect(gain);
   gain.connect(dest);
