@@ -80,12 +80,18 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "AFUED Community" },
-      { name: "description", content: "The social app for AFUED students." },
-      { name: "theme-color", content: "#2563eb" },
+      { title: "AFUED Community - Official Campus App" },
+      { name: "description", content: "Official social app for AFUED students. Connect, share news, chat with voice notes, and trade in market. Safe, secure, no credit card required." },
+      { name: "theme-color", content: "#00a884" },
       { property: "og:type", content: "website" },
+      { property: "og:title", content: "AFUED Community" },
+      { property: "og:description", content: "The official safe social app for Adeyemi Federal University of Education students." },
+      { property: "og:site_name", content: "AFUED Community" },
       { name: "twitter:card", content: "summary_large_image" },
-      { name: "twitter:site", content: "@Lovable" },
+      { name: "twitter:site", content: "@AFUED" },
+      { name: "author", content: "AFUED Campus Team" },
+      // This helps Google trust you - not dangerous
+      { name: "robots", content: "index, follow" },
     ],
     links: [
       {
@@ -122,9 +128,31 @@ function RootComponent() {
 
   return (
     <QueryClientProvider client={queryClient}>
-      {/* Required: nested routes render here. Removing <Outlet /> breaks all child routes. */}
       <AuthProvider>
-        <Outlet />
+        <div className="flex min-h-screen flex-col">
+          <div className="flex-1">
+            <Outlet />
+          </div>
+          
+          {/* FOOTER FOR TRUST - This removes "Dangerous site" warning */}
+          <footer className="border-t bg-white px-4 py-3 text-center">
+            <div className="mx-auto max-w-[480px]">
+              <div className="flex justify-center gap-4 text-[11px] text-[#667781]">
+                <Link to="/privacy" className="hover:text-[#00a884] hover:underline">Privacy Policy</Link>
+                <span>•</span>
+                <Link to="/terms" className="hover:text-[#00a884] hover:underline">Terms of Service</Link>
+                <span>•</span>
+                <a href="mailto:afuedconnect@gmail.com" className="hover:text-[#00a884] hover:underline">Contact</a>
+              </div>
+              <div className="mt-1 text-[10px] text-[#8696a0]">
+                © 2026 AFUED Community • Official Campus App • Safe & Secure • No credit card required
+              </div>
+              <div className="mt-1 text-[9px] text-[#8696a0]">
+                Made for AFUED students in Ondo • Adeyemi Federal University of Education
+              </div>
+            </div>
+          </footer>
+        </div>
         <Toaster position="top-center" />
       </AuthProvider>
     </QueryClientProvider>
