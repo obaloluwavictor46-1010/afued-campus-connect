@@ -1,8 +1,8 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { uploadToBunny, startBoldVoiceRecording } from '../lib/bunny'
-import { Smile, Paperclip, Camera, Mic, Send, Trash2, Pause, Play } from 'lucide-react'
+import { Smile, Paperclip, Camera, Mic, Send, Trash2, Pause, Play, ArrowLeft } from 'lucide-react'
 
 export const Route = createFileRoute('/chat/$userId')({
   component: ChatPage,
@@ -34,6 +34,7 @@ function ChatPage(){
     supabase.auth.getUser().then(({data})=>setMe(data.user))
     supabase.from('profiles').select('*').eq('id', otherUserId).single().then(({data})=>setOther(data))
     initChat()
+    return ()=> { supabase.removeAllChannels() }
   },[])
 
   useEffect(()=>{ listRef.current?.scrollTo(0, listRef.current.scrollHeight) }, [messages])
@@ -49,23 +50,21 @@ function ChatPage(){
     if(conv){ 
       setConvId(conv.id); 
       loadMsgs(conv.id);
-      // REALTIME FIX - THIS SOLVE YOUR BLANK SCREENSHOT!
       subscribeToChat(conv.id);
     }
   }
 
   function subscribeToChat(cId:string){
-    // Remove old channel
+    // CORRECT FIX FOR BLANK SCREENSHOT - remove only old chat channels
     supabase.removeAllChannels()
-    const channel = supabase.channel(`chat-${cId}`, {config:{broadcast:{self:true}}})
+    const channel = supabase.channel(`chat-${cId}`)
       .on('postgres_changes', 
         { event: 'INSERT', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cId}` }, 
         (payload)=>{
           const newMsg = payload.new as any
           setMessages(prev=>{
-            // Remove temp if exists
-            const filtered = prev.filter(m=> !String(m.id).startsWith('temp-') || m.content !== newMsg.content)
-            // Avoid duplicate
+            // remove temp if exists
+            const filtered = prev.filter(m=> !String(m.id).startsWith('temp-'))
             if(filtered.some(m=>m.id===newMsg.id)) return filtered
             return [...filtered, newMsg]
           })
@@ -99,8 +98,6 @@ function ChatPage(){
     try{
       const { error } = await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type, content: msg})
       if(error) throw error
-      // Real-time go add am, remove temp
-      setMessages(prev=>prev.filter(m=>m.id!==tempId))
     }catch(e){
       setMessages(prev=>prev.filter(m=>m.id!==tempId))
       alert("Send fail - check internet")
@@ -114,26 +111,21 @@ function ChatPage(){
     const isVideoFile = file.type.startsWith('video/')
     const displayType = isVideoFile ? 'video' : type
     
-    // Show instantly like WhatsApp!
     setMessages(prev=>[...prev, { id: tempId, sender_id: me?.id, conversation_id: convId, type: displayType, content: localUrl, isUploading: true, created_at: new Date().toISOString() }])
     
     try{
       setUploading(true); setProgress(0)
       const url = await uploadToBunny(file, isVideoFile ? 'videos' : type==='image' ? 'chat_images' : 'files', (p)=> setProgress(p))
-      // Update temp to real
       setMessages(prev=>prev.map(m=>m.id===tempId ? {...m, content: url, isUploading: false} : m))
       const { data: {user} } = await supabase.auth.getUser()
-      const { error } = await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type: displayType, content: url})
-      if(error) throw error
-      // Remove temp, realtime go add real one
-      setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 500)
+      await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type: displayType, content: url})
+      setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 800)
     }catch(err:any){
       alert(err.message)
       setMessages(prev=>prev.filter(m=>m.id!==tempId))
     }finally{
       setUploading(false); setProgress(0)
       e.target.value = ''
-      // Don't revoke immediately - let it show
       setTimeout(()=> URL.revokeObjectURL(localUrl), 5000)
     }
   }
@@ -177,7 +169,7 @@ function ChatPage(){
           setMessages(prev=>prev.map(m=>m.id===tempId ? {...m, content: url, isUploading:false} : m))
           const { data: {user} } = await supabase.auth.getUser()
           await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type:'voice', content: url})
-          setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 500)
+          setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 800)
         }finally{ setUploading(false); setTimeout(()=> URL.revokeObjectURL(localUrl), 5000) }
         cleanupRec()
       }
@@ -208,10 +200,13 @@ function ChatPage(){
 
   return (
     <div style={{maxWidth:480, margin:'0 auto', height:'100vh', display:'flex', flexDirection:'column', background:'#efeae2'}}>
+      {/* HEADER NOW TAP TO PROFILE + FOLLOW - BIG APP STYLE */}
       <div style={{padding:'10px 12px', background:'white', borderBottom:'1px solid #e2e8f0', display:'flex', alignItems:'center', gap:10, position:'sticky', top:0, zIndex:10}}>
-        <button onClick={()=>history.back()}>←</button>
-        <img src={other?.avatar_url||'https://via.placeholder.com/40'} style={{width:36,height:36,borderRadius:18, objectFit:'cover'}}/>
-        <div><b style={{fontSize:15}}>{other?.full_name||'Chat'}</b><div style={{fontSize:11, color:'#667781'}}>tap for info</div></div>
+        <Link to="/chat" style={{padding:4}}><ArrowLeft size={20}/></Link>
+        <Link to={`/profile/${otherUserId}`} style={{display:'flex', alignItems:'center', gap:10, textDecoration:'none', color:'black', flex:1}}>
+          <img src={other?.avatar_url||`https://ui-avatars.com/api/?name=${other?.full_name||'User'}`} style={{width:36,height:36,borderRadius:18, objectFit:'cover'}}/>
+          <div><b style={{fontSize:15}}>{other?.full_name||'Chat'}</b><div style={{fontSize:11, color:'#667781'}}>tap to view profile • posts • follow</div></div>
+        </Link>
       </div>
 
       <div ref={listRef} style={{flex:1, overflowY:'auto', padding:'12px 8px 90px'}}>
@@ -226,16 +221,10 @@ function ChatPage(){
             }}>
               {m.type==='text' && <span style={{fontSize:15, lineHeight:'19px', wordBreak:'break-word'}}>{m.content}</span>}
               {m.type==='image' && <img src={m.content} style={{width:220, borderRadius:8, display:'block', maxHeight:300, objectFit:'cover'}} loading="lazy"/>}
-              {m.type==='file' && <a href={m.content} target="_blank" rel="noreferrer" style={{color: m.sender_id===me?.id?'#e9edef':'#008069', fontSize:14}}>📎 {m.file_name||'Open File'}</a>}
+              {m.type==='file' && <a href={m.content} target="_blank" rel="noreferrer" style={{color: m.sender_id===me?.id?'#e9edef':'#008069', fontSize:14}}>📎 Open File</a>}
               {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} />}
-              {m.type==='video' && (
-                m.content?.includes('iframe.mediadelivery.net') ? (
-                  <iframe src={m.content} style={{width:220, height:150, border:0, borderRadius:8}} allow="autoplay; fullscreen" allowFullScreen />
-                ) : (
-                  <video src={m.content} controls playsInline style={{width:220, borderRadius:8, background:'black', maxHeight:300}} />
-                )
-              )}
-              {(m as any).isUploading && <div style={{fontSize:10, marginTop:4, color: m.sender_id===me?.id?'#e9edef':'#667781'}}>⏳ uploading...</div>}
+              {m.type==='video' && <video src={m.content} controls playsInline style={{width:220, borderRadius:8, background:'black', maxHeight:300}} />}
+              {(m as any).isUploading && <div style={{fontSize:10, marginTop:4}}>⏳ uploading...</div>}
             </div>
           </div>
         ))}
@@ -265,9 +254,9 @@ function ChatPage(){
         </div>
         
         {text.trim() ? (
-          <button onClick={()=>send()} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', border:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}><Send size={20} color="white"/></button>
+          <button onClick={()=>send()} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', border:'none', display:'flex', alignItems:'center', justifyContent:'center'}}><Send size={20} color="white"/></button>
         ) : (
-          <button onTouchStart={startVoice} onMouseDown={startVoice} onTouchEnd={stopVoice} onMouseUp={stopVoice} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', border:'none', display:'flex', alignItems:'center', justifyContent:'center', boxShadow:'0 1px 3px rgba(0,0,0,0.3)'}}><Mic size={22} color="white" style={{fill:'white'}}/></button>
+          <button onTouchStart={startVoice} onMouseDown={startVoice} onTouchEnd={stopVoice} onMouseUp={stopVoice} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', border:'none', display:'flex', alignItems:'center', justifyContent:'center'}}><Mic size={22} color="white"/></button>
         )}
 
         <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.zip,.mp3" onChange={e=>handleUpload(e,'file')}/>
@@ -296,9 +285,7 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
     else { audioRef.current?.play(); setPlaying(true) }
   }
 
-  useEffect(()=>{
-    return ()=>{ audioRef.current?.pause() }
-  },[])
+  useEffect(()=>{ return ()=>{ audioRef.current?.pause() } },[])
 
   return (
     <div style={{display:'flex', alignItems:'center', gap:10, minWidth:180}}>
@@ -307,8 +294,8 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
       </button>
       <div style={{flex:1}}>
         <div style={{height:3, background: isMe ? 'rgba(255,255,255,0.3)' : '#e9edef', borderRadius:2}}><div style={{width:`${pct}%`, height:3, background: isMe ? 'white' : '#00a884', borderRadius:2, transition:'width 0.1s'}}/></div>
-        <div style={{fontSize:10, marginTop:4, opacity:0.7}}>{dur ? `${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')}` : '0:00'} • 🔊 Bold</div>
+        <div style={{fontSize:10, marginTop:4, opacity:0.7}}>{dur ? `${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')}` : '0:00'} • 🔊</div>
       </div>
     </div>
   )
-}
+        }
