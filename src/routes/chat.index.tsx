@@ -57,46 +57,61 @@ function ChatList() {
   }, [user]);
 
   const sorted = useMemo(() => {
-    const s = q.toLowerCase();
+    const s = q.toLowerCase().trim();
     return users
-      .filter((u) => !s || (u.full_name ?? "").toLowerCase().includes(s) || (u.email ?? "").toLowerCase().includes(s))
+      .filter((u) => {
+        if (!s) return true;
+        // FIXED: NOW SEARCH BY NAME + EMAIL + PHONE + MATRIC + DEPARTMENT + FACULTY
+        const hay = `${u.full_name||''} ${u.email||''} ${(u as any).phone||''} ${(u as any).matric_no||''} ${(u as any).department||''} ${(u as any).faculty||''} ${shortFaculty(u.faculty)||''}`.toLowerCase();
+        return hay.includes(s);
+      })
       .sort((a, b) => (last[b.id]?.at ?? "").localeCompare(last[a.id]?.at ?? "") || Number(online.has(b.id)) - Number(online.has(a.id)));
   }, [users, last, q, online]);
 
   return (
     <div>
-      <div className="p-4 pb-2">
-        <div className="flex items-center gap-2 rounded-full bg-muted px-4">
+      <div className="p-4 pb-2 flex items-center gap-2">
+        <div className="flex flex-1 items-center gap-2 rounded-full bg-muted px-4">
           <Search className="h-4 w-4 text-muted-foreground" />
-          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search students" className="w-full bg-transparent py-2.5 text-sm outline-none" />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search name, matric no, phone, dept..." className="w-full bg-transparent py-2.5 text-sm outline-none" />
         </div>
+        <Link to="/search" className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-primary text-white shadow">
+          <Search className="h-5 w-5" />
+        </Link>
       </div>
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
       ) : (
         <ul>
-          {sorted.map((u) => {
-            const l = last[u.id];
-            return (
-              <li key={u.id}>
-                <Link to="/chat/$userId" params={{ userId: u.id }} className="flex items-center gap-3 px-4 py-3 active:bg-muted">
-                  <Avatar url={u.avatar_url} name={u.full_name} size={50} online={online.has(u.id)} />
-                  <div className="min-w-0 flex-1 border-b pb-3">
-                    <div className="flex items-baseline justify-between gap-2">
-                      <p className="truncate font-semibold">{u.full_name || u.email}</p>
-                      {l && <span className="shrink-0 text-[11px] text-muted-foreground">{formatDistanceToNow(new Date(l.at))}</span>}
+          {sorted.length === 0 && q ? (
+            <div className="py-10 text-center text-sm text-muted-foreground">
+              No student found for "<b>{q}</b>"<br/>Try name, matric, phone or dept<br/>
+              <Link to="/search" className="mt-3 inline-block rounded-full bg-primary px-4 py-2 text-white">Advanced Search</Link>
+            </div>
+          ) : (
+            sorted.map((u) => {
+              const l = last[u.id];
+              return (
+                <li key={u.id}>
+                  <Link to="/chat/$userId" params={{ userId: u.id }} className="flex items-center gap-3 px-4 py-3 active:bg-muted">
+                    <Avatar url={u.avatar_url} name={u.full_name} size={50} online={online.has(u.id)} />
+                    <div className="min-w-0 flex-1 border-b pb-3">
+                      <div className="flex items-baseline justify-between gap-2">
+                        <p className="truncate font-semibold">{u.full_name || u.email}</p>
+                        {l && <span className="shrink-0 text-[11px] text-muted-foreground">{formatDistanceToNow(new Date(l.at))}</span>}
+                      </div>
+                      <div className="flex items-center justify-between gap-2">
+                        <p className="truncate text-sm text-muted-foreground">{l ? l.text : online.has(u.id) ? "Online" : shortFaculty(u.faculty) || (u as any).department || (u as any).matric_no || "Tap to chat"}</p>
+                        {l && l.unread > 0 && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground">{l.unread}</span>}
+                      </div>
                     </div>
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="truncate text-sm text-muted-foreground">{l ? l.text : online.has(u.id) ? "Online" : shortFaculty(u.faculty) || "Tap to chat"}</p>
-                      {l && l.unread > 0 && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground">{l.unread}</span>}
-                    </div>
-                  </div>
-                </Link>
-              </li>
-            );
-          })}
+                  </Link>
+                </li>
+              );
+            })
+          )}
         </ul>
       )}
     </div>
   );
-}
+          }
