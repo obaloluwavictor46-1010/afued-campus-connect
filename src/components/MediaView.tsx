@@ -22,6 +22,7 @@ export function fileNameFromUrl(url: string) {
 export type MediaKind = "image" | "video" | "audio" | "file"
 export function kindOfUrl(url: string): MediaKind {
   if (!url) return "file"
+  if (url.includes('iframe.mediadelivery.net')) return "video" // NEW: Stream video
   if (url.match(/\.(mp4|mov|webm|avi)$/i)) return "video"
   if (url.match(/\.(mp3|wav|m4a|ogg)$/i)) return "audio"
   if (url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return "image"
@@ -47,13 +48,14 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
-// --- THIS IS THE FIX FOR VIDEO AUTO-PAUSE ---
+// --- FIXED MediaView - NOW SUPPORT FAST STREAM ---
 export function MediaView({ url, kind, name, className }: { url: string, kind?: MediaKind, name?: string, className?: string }) {
   const k = (kind as MediaKind) || kindOfUrl(url)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const isStreamVideo = url?.includes('iframe.mediadelivery.net')
 
   useEffect(() => {
-    if (k !== "video") return
+    if (k !== "video" || isStreamVideo) return
     const video = videoRef.current
     if (!video) return
     const observer = new IntersectionObserver(
@@ -68,15 +70,28 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
     )
     observer.observe(video)
     return () => observer.disconnect()
-  }, [k, url])
+  }, [k, url, isStreamVideo])
 
   if (k === "file") return <FileChip url={url} name={name} className={className} />
   return (
     <div className={`relative ${className}`}>
       {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" />}
-      {k === "video" && <video ref={videoRef} src={url} controls playsInline preload="metadata" className="w-full rounded bg-black" />}
+      {k === "video" && (
+        isStreamVideo ? (
+          <iframe 
+            src={url} 
+            className="w-full rounded bg-black"
+            style={{ height: '380px', border: 0 }}
+            allow="autoplay; fullscreen" 
+            allowFullScreen
+            loading="lazy"
+          />
+        ) : (
+          <video ref={videoRef} src={url} controls playsInline preload="metadata" className="w-full rounded bg-black" />
+        )
+      )}
       {k === "audio" && <audio src={url} controls className="w-full" />}
-      {k !== "audio" && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white" />}
+      {k !== "audio" && !isStreamVideo && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white" />}
     </div>
   )
 }
@@ -156,4 +171,4 @@ export function useMediaPicker(maxVideoMB = 500) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-    }
+      }
