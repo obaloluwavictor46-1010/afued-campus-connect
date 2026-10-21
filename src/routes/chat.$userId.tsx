@@ -15,6 +15,8 @@ function ChatPage(){
   const [text, setText] = useState('')
   const [convId, setConvId] = useState<string>('')
   const [recording, setRecording] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [progress, setProgress] = useState(0)
   const mediaRef = useRef<any>(null)
 
   useEffect(()=>{
@@ -50,8 +52,18 @@ function ChatPage(){
 
   async function handleUpload(e:any, type='image'){
     const file = e.target.files[0]; if(!file) return
-    const url = await uploadToBunny(file)
-    send(type, url)
+    try{
+      setUploading(true); setProgress(0)
+      const isVideo = file.type.startsWith('video/') || type==='video'
+      // THIS NOW USE FAST STREAM FOR VIDEO (785939)
+      const url = await uploadToBunny(file, isVideo ? 'videos' : type, (p)=> setProgress(p))
+      send(isVideo ? 'video' : type, url)
+    }catch(err:any){
+      alert(err.message)
+    }finally{
+      setUploading(false); setProgress(0)
+      e.target.value = ''
+    }
   }
 
   async function startVoice(){
@@ -63,8 +75,11 @@ function ChatPage(){
       rec.onstop = async()=>{
         const blob = new Blob(chunks,{type:'audio/webm'})
         const file = new File([blob], `voice-${Date.now()}.webm`, {type:'audio/webm'})
-        const url = await uploadToBunny(file)
-        send('voice', url)
+        try{
+          setUploading(true); setProgress(0)
+          const url = await uploadToBunny(file, 'voice', (p)=> setProgress(p))
+          send('voice', url)
+        }finally{ setUploading(false) }
       }
       mediaRef.current = rec
       rec.start(); setRecording(true)
@@ -91,18 +106,35 @@ function ChatPage(){
               {m.type==='image' && <img src={m.content} style={{width:200, borderRadius:8}}/>}
               {m.type==='file' && <a href={m.content} target="_blank" style={{color: m.sender_id===me?.id?'white':'#2563eb'}}>📎 Open File</a>}
               {m.type==='voice' && <audio src={m.content} controls style={{width:180}}/>}
+              {/* NEW VIDEO PLAYER - FAST STREAM */}
+              {m.type==='video' && (
+                m.content?.includes('iframe.mediadelivery.net') ? (
+                  <iframe src={m.content} style={{width:220, height:150, border:0, borderRadius:8}} allow="autoplay; fullscreen" allowFullScreen />
+                ) : (
+                  <video src={m.content} controls style={{width:200, borderRadius:8}} />
+                )
+              )}
             </div>
           </div>
         ))}
+        {uploading && (
+          <div style={{textAlign:'center', padding:8, background:'#dcfce7', borderRadius:8, marginTop:8, fontSize:13}}>
+            🚀 Uploading... {progress}% {progress===100 ? '(Compressing for fast play...)' : ''}
+            <div style={{height:4, background:'#e2e8f0', borderRadius:2, marginTop:4}}>
+              <div style={{width:`${progress}%`, height:4, background:'#22c55e', borderRadius:2}} />
+            </div>
+          </div>
+        )}
       </div>
       <div style={{padding:10, background:'white', borderTop:'1px solid #e2e8f0', display:'flex', gap:6, alignItems:'center'}}>
         <label style={{cursor:'pointer', fontSize:20}}>📎<input type="file" hidden onChange={e=>handleUpload(e,'file')}/></label>
         <label style={{cursor:'pointer', fontSize:20}}>🖼️<input type="file" accept="image/*" hidden onChange={e=>handleUpload(e,'image')}/></label>
+        <label style={{cursor:'pointer', fontSize:20}}>🎥<input type="file" accept="video/*" hidden onChange={e=>handleUpload(e,'video')}/></label>
         <input value={text} onChange={e=>setText(e.target.value)} placeholder="Type message..." style={{flex:1, padding:'10px 12px', borderRadius:20, border:'1px solid #e2e8f0'}}/>
         <button onClick={()=>send()} style={{background:'#2563eb', color:'white', border:'none', padding:'10px 14px', borderRadius:20}}>Send</button>
         <button onMouseDown={startVoice} onMouseUp={stopVoice} onTouchStart={startVoice} onTouchEnd={stopVoice} style={{fontSize:20, background: recording?'#ef4444':'#f1f5f9', border:'none', padding:'8px 10px', borderRadius:20}}>{recording?'⏹️':'🎤'}</button>
       </div>
-      <small style={{textAlign:'center', padding:4, color:'#94a3b8'}}>Hold 🎤 for voice note (max 10s) • No video call as requested</small>
+      <small style={{textAlign:'center', padding:4, color:'#94a3b8'}}>Hold 🎤 for voice • Tap 🎥 for fast video</small>
     </div>
   )
-      }
+                      }
