@@ -46,7 +46,13 @@ function FeedInner() {
     const { data, error } = await q;
     if (error) toast.error(error.message);
     const list = (data ?? []) as Post[];
-    setPosts(list);
+    // Keep optimistic posts that are still uploading
+    setPosts(prev => {
+      const uploading = prev.filter((p: any) => p.isUploading);
+      const merged = [...uploading, ...list];
+      // remove duplicate ids
+      return merged.filter((v,i,a)=>a.findIndex(t=>t.id===v.id)===i);
+    });
     setProfiles(await fetchProfiles(list.map((p) => p.user_id)));
     if (list.length) {
       const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
@@ -127,7 +133,13 @@ function FeedInner() {
         ))}
       </div>
       <div className="space-y-4 p-4">
-        <Composer defaultChannel={channel} onPosted={load} />
+        <Composer 
+          defaultChannel={channel} 
+          onOptimisticAdd={(temp: any) => setPosts(prev => [temp, ...prev])}
+          onOptimisticReplace={(tempId: string, real: any) => setPosts(prev => prev.map(p => p.id === tempId ? { ...p, ...real, isUploading: false } : p))}
+          onOptimisticRemove={(tempId: string) => setPosts(prev => prev.filter(p => p.id !== tempId))}
+          onPosted={load} 
+        />
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : posts.length === 0 ? (
@@ -135,6 +147,11 @@ function FeedInner() {
         ) : (
           posts.map((p) => (
             <div key={p.id} className="relative">
+              {(p as any).isUploading && (
+                <div className="absolute top-0 left-0 right-0 z-20 h-1 overflow-hidden rounded-t-2xl bg-muted">
+                  <div className="h-full w-full animate-pulse bg-primary" style={{ width: `${(p as any).uploadPct || 30}%` }} />
+                </div>
+              )}
               <div className="absolute right-3 top-3 z-10">
                 <button
                   onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === p.id ? null : p.id); }}
@@ -161,7 +178,10 @@ function FeedInner() {
                   </div>
                 )}
               </div>
-              <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
+              <div className={(p as any).isUploading ? "opacity-80" : ""}>
+                <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
+              </div>
+              {(p as any).isUploading && <p className="px-4 pb-2 text-[11px] text-primary font-semibold">Uploading fast like WhatsApp... {(p as any).uploadPct || 0}%</p>}
             </div>
           ))
         )}
@@ -184,7 +204,13 @@ function FeedInner() {
   );
 }
 
-function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPosted: () => void }) {
+function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticReplace, onOptimisticRemove }: { 
+  defaultChannel: string; 
+  onPosted: () => void;
+  onOptimisticAdd: (p: any) => void;
+  onOptimisticReplace: (tempId: string, real: any) => void;
+  onOptimisticRemove: (tempId: string) => void;
+}) {
   const { user, profile } = useAuth();
   const [content, setContent] = useState("");
   const picker = useMediaPicker();
@@ -193,13 +219,56 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
   const [pct, setPct] = useState<number | null>(null);
 
-  // NEW BUNNY UPLOAD - NO MORE HANG!
+  // NEW: FACEBOOK INSTANT LOGIC - SHOW BEFORE UPLOAD!
   const post = async () => {
     if (!user || (!content.trim() && !picker.files.length)) return;
-    setBusy(true);
+    
     const since = new Date(); since.setHours(0, 0, 0, 0);
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
-    if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); setBusy(false); return; }
+    if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
+
+    // 1. CREATE LOCAL BLOB URLS - INSTANT LIKE FACEBOOK/WHATSAPP!
+    const localImages: string[] = [];
+    let localVideo = "";
+    let localMusic = "";
+    const blobUrls: string[] = [];
+
+    for (const f of picker.files) {
+      const blobUrl = URL.createObjectURL(f);
+      blobUrls.push(blobUrl);
+      const name = (f.name?.toLowerCase() || "");
+      const type = f.type || "";
+      const isMusic = type.startsWith("audio/") || name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav");
+      const isVideo = type.startsWith("video/");
+      if (isMusic) localMusic = blobUrl;
+      else if (isVideo) localVideo = blobUrl;
+      else localImages.push(blobUrl);
+    }
+
+    const tempId = `temp-${Date.now()}`;
+    const tempPost: any = {
+      id: tempId,
+      user_id: user.id,
+      content: content.trim(),
+      faculty_channel: faculty,
+      image_urls: localImages,
+      image_url: localImages[0] || "",
+      music_url: localMusic,
+      video_url: localVideo,
+      created_at: new Date().toISOString(),
+      isUploading: true,
+      uploadPct: 5
+    };
+
+    // 2. SHOW FOR FEED IMMEDIATELY!
+    onOptimisticAdd(tempPost);
+    const savedContent = content.trim();
+    const savedFaculty = faculty;
+    setContent(""); 
+    picker.clear();
+    setBusy(true);
+
+    // 3. SECRET BACKGROUND UPLOAD LIKE WHATSAPP!
     try {
       let image_urls: string[] = [];
       let music_url = "";
@@ -207,37 +276,56 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
       
       for (let i = 0; i < picker.files.length; i++) {
         const file: any = picker.files[i];
-        setPct(Math.round(((i+1)/picker.files.length)*100));
         
         const name = file.name?.toLowerCase() || "";
         const type = file.type || "";
         const isMusic = type.startsWith("audio/") || name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav");
         const isVideo = type.startsWith("video/");
         
-        if (isMusic) {
-          music_url = await uploadToBunny(file, "music");
-        } else if (isVideo) {
-          video_url = await uploadToBunny(file, "videos");
-        } else {
-          const url = await uploadToBunny(file, "images");
-          image_urls.push(url);
-        }
+        const url = await uploadToBunny(file, isMusic ? "music" : isVideo ? "videos" : "images", (p) => {
+          setPct(p);
+          onOptimisticReplace(tempId, { uploadPct: p });
+        });
+
+        if (isMusic) music_url = url;
+        else if (isVideo) video_url = url;
+        else image_urls.push(url);
       }
 
-      const { error } = await supabase.from("posts").insert({
+      // 4. SAVE REAL URL TO DATABASE
+      const { data, error } = await supabase.from("posts").insert({
         user_id: user.id,
-        content: content.trim(),
-        faculty_channel: faculty,
+        content: savedContent,
+        faculty_channel: savedFaculty,
         image_urls: image_urls,
         image_url: image_urls[0] || "",
         music_url: music_url,
         video_url: video_url,
-      } as any);
+      } as any).select().single();
       
       if (error) throw error;
       
-      setContent(""); picker.clear(); toast.success("Posted! Bunny don upload am fast! 🚀"); onPosted();
-    } catch (e) { toast.error((e as Error).message); } finally { setBusy(false); setPct(null); }
+      // 5. REPLACE TEMP WITH REAL - SWAP BLOB WITH BUNNY URL!
+      onOptimisticReplace(tempId, {
+        ...data,
+        uploadPct: 100,
+        isUploading: false
+      });
+
+      // Cleanup blob urls
+      blobUrls.forEach(u => URL.revokeObjectURL(u));
+
+      toast.success("Posted! Fast like WhatsApp! 🚀");
+      onPosted();
+      
+    } catch (e) { 
+      toast.error((e as Error).message); 
+      onOptimisticRemove(tempId);
+      blobUrls.forEach(u => URL.revokeObjectURL(u));
+    } finally { 
+      setBusy(false); 
+      setPct(null); 
+    }
   };
 
   return (
@@ -265,4 +353,4 @@ function Composer({ defaultChannel, onPosted }: { defaultChannel: string; onPost
       </div>
     </div>
   );
-  }
+                                                     }
