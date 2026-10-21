@@ -1,14 +1,18 @@
 import { useEffect, useState, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Heart, MessageCircle, Play, Pause, Music2 } from "lucide-react";
+import { Heart, MessageCircle, Play, Pause, Music2, Download } from "lucide-react";
 import { Avatar } from "./AppShell";
 import { shortFaculty, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
+import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
 
-// VIDEO - MUST PAUSE WHEN COMOT
-function AutoPauseVideo({ src }: { src: string }) {
+// VIDEO - MUST PAUSE WHEN COMOT + WITH WATERMARK DOWNLOAD
+function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [dlProgress, setDlProgress] = useState(0)
+  const [isDownloading, setIsDownloading] = useState(false)
+
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
@@ -19,14 +23,51 @@ function AutoPauseVideo({ src }: { src: string }) {
     obs.observe(video);
     return () => obs.disconnect();
   }, [src]);
-  return <video ref={videoRef} src={src} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />;
+
+  return (
+    <div className="relative w-full bg-black group">
+      <video ref={videoRef} src={src} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />
+      
+      {/* WATERMARK PREVIEW - Like TikTok */}
+      <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+        AFUED • @{authorName} • afuedconnect
+      </div>
+
+      {/* DOWNLOAD BUTTON */}
+      <button
+        onClick={async (e)=>{
+          e.stopPropagation()
+          setIsDownloading(true)
+          try {
+            await downloadVideoWithAFUEDWatermark(src, authorName, (p)=>setDlProgress(p))
+          } finally {
+            setIsDownloading(false)
+            setDlProgress(0)
+          }
+        }}
+        disabled={isDownloading}
+        className="absolute bottom-2 right-2 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
+      >
+        <Download className="h-3 w-3" />
+        {isDownloading ? ` ${dlProgress}%` : " Download"}
+      </button>
+
+      {/* LOADING BAR - Like that TikTok loader you sent */}
+      {isDownloading && (
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+          <div className="h-full bg-[#00a884] transition-all duration-200" style={{width: `${dlProgress}%`}}></div>
+        </div>
+      )}
+    </div>
+  )
 }
 
-// IFRAME - FORCE KILL SOUND WHEN COMOT
-function AutoPauseBunnyIframe({ src }: { src: string }) {
+// IFRAME - FORCE KILL SOUND WHEN COMOT + SIMPLE DOWNLOAD
+function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const savedSrc = useRef(src);
+  const [isDownloading, setIsDownloading] = useState(false);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -36,7 +77,6 @@ function AutoPauseBunnyIframe({ src }: { src: string }) {
         const iframe = iframeRef.current;
         if (!iframe) return;
         if (!entry.isIntersecting) {
-          // THIS LINE KILL SOUND BY FORCE!
           if (iframe.src !== "about:blank") {
             savedSrc.current = iframe.src;
             iframe.src = "about:blank";
@@ -54,8 +94,29 @@ function AutoPauseBunnyIframe({ src }: { src: string }) {
   }, []);
 
   return (
-    <div ref={wrapRef} className="w-full bg-black" style={{ height: '380px' }}>
+    <div ref={wrapRef} className="relative w-full bg-black" style={{ height: '380px' }}>
       <iframe ref={iframeRef} src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen />
+      
+      <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+        AFUED • @{authorName} • afuedconnect
+      </div>
+
+      <button
+        onClick={async (e)=>{
+          e.stopPropagation()
+          setIsDownloading(true)
+          try {
+            await downloadAFUEDVideoSimple(src, authorName)
+          } finally {
+            setIsDownloading(false)
+          }
+        }}
+        disabled={isDownloading}
+        className="absolute bottom-2 right-2 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1"
+      >
+        <Download className="h-3 w-3" />
+        {isDownloading ? " ..." : " Download"}
+      </button>
     </div>
   );
 }
@@ -94,6 +155,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
   const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
+  const authorName = author?.full_name || post.profiles?.full_name || "student";
   
   let imageUrls: string[] = [];
   try {
@@ -154,7 +216,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
 
       {videoUrl && !imageUrls.length && (
-        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} /> : <AutoPauseVideo src={videoUrl} />
+        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} authorName={authorName} /> : <AutoPauseVideo src={videoUrl} authorName={authorName} />
       )}
 
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
@@ -183,4 +245,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-}
+            }
