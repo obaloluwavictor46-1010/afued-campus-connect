@@ -4,7 +4,7 @@ import { formatDistanceToNow } from "date-fns";
 import { Heart, MessageCircle, Play, Pause, Music2 } from "lucide-react";
 import { Avatar } from "./AppShell";
 import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
-import { MediaGallery } from "./MediaView";
+import { MediaGallery, MediaView } from "./MediaView";
 
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const key = `afued-like-${post.id}`;
@@ -21,6 +21,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
 
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
+  const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
   
   // --- FIXED BUNNY IMAGE PARSER - NO MORE mediaOf ---
   let imageUrls: string[] = [];
@@ -84,7 +85,18 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
 
       {videoUrl && !imageUrls.length && (
-        <video src={videoUrl} controls className="w-full max-h-[480px] bg-black" />
+        isStreamVideo ? (
+          <iframe
+            src={videoUrl}
+            className="w-full bg-black"
+            style={{ height: '380px', border: 0 }}
+            allow="autoplay; fullscreen"
+            allowFullScreen
+            loading="lazy"
+          />
+        ) : (
+          <video src={videoUrl} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />
+        )
       )}
 
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
