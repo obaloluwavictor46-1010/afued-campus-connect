@@ -6,13 +6,107 @@ import { Avatar } from "./AppShell";
 import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
 import { MediaGallery, MediaView } from "./MediaView";
 
+// --- AUTO PAUSE VIDEO LIKE TIKTOK/FACEBOOK ---
+function AutoPauseVideo({ src }: { src: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video) return;
+
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach((entry) => {
+          if (!entry.isIntersecting) {
+            video.pause(); // Scroll comot = pause immediately!
+          }
+        });
+      },
+      { threshold: 0.2 } // once 20% comot screen, pause
+    );
+
+    observer.observe(video);
+    return () => observer.disconnect();
+  }, [src]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={src}
+      controls
+      playsInline
+      preload="metadata"
+      className="w-full max-h-[480px] bg-black"
+    />
+  );
+}
+
+// --- AUTO PAUSE BUNNY IFRAME (Stream) ---
+function AutoPauseBunnyIframe({ src }: { src: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const [isVisible, setIsVisible] = useState(true);
+
+  useEffect(() => {
+    const el = wrapRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        // If comot screen, hide iframe = stop audio!
+        setIsVisible(entry.isIntersecting);
+      },
+      { threshold: 0.2 }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
+
+  return (
+    <div ref={wrapRef} className="w-full bg-black" style={{ height: '380px' }}>
+      {isVisible ? (
+        <iframe
+          src={src}
+          className="w-full h-full"
+          style={{ border: 0 }}
+          allow="autoplay; fullscreen"
+          allowFullScreen
+          loading="lazy"
+        />
+      ) : (
+        <div className="w-full h-full flex items-center justify-center text-white/60 text-sm">
+          Paused - scroll back to play
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const key = `afued-like-${post.id}`;
   const [liked, setLiked] = useState(false);
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const cardRef = useRef<HTMLElement>(null);
   
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
+
+  // --- AUTO PAUSE MUSIC WHEN SCROLL COMOT ---
+  useEffect(() => {
+    const card = cardRef.current;
+    const audio = audioRef.current;
+    if (!card || !audio) return;
+
+    const observer = new IntersectionObserver(
+      ([entry]) => {
+        if (!entry.isIntersecting && playing) {
+          audio.pause();
+          setPlaying(false);
+        }
+      },
+      { threshold: 0.2 }
+    );
+    observer.observe(card);
+    return () => observer.disconnect();
+  }, [playing]);
   
   const toggle = () => {
     localStorage.setItem(key, liked ? "0" : "1");
@@ -53,7 +147,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   };
 
   return (
-    <article className="overflow-hidden rounded-2xl border bg-card shadow-card">
+    <article ref={cardRef} className="overflow-hidden rounded-2xl border bg-card shadow-card">
       <div className="flex items-center gap-3 p-4">
         <Link to="/u/$userId" params={{ userId: post.user_id }} className="flex min-w-0 flex-1 items-center gap-3">
           <Avatar url={author?.avatar_url} name={author?.full_name} />
@@ -86,16 +180,9 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
 
       {videoUrl && !imageUrls.length && (
         isStreamVideo ? (
-          <iframe
-            src={videoUrl}
-            className="w-full bg-black"
-            style={{ height: '380px', border: 0 }}
-            allow="autoplay; fullscreen"
-            allowFullScreen
-            loading="lazy"
-          />
+          <AutoPauseBunnyIframe src={videoUrl} />
         ) : (
-          <video src={videoUrl} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />
+          <AutoPauseVideo src={videoUrl} />
         )
       )}
 
@@ -127,4 +214,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-}
+      }
