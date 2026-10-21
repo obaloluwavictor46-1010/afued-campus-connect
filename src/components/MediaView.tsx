@@ -22,7 +22,7 @@ export function fileNameFromUrl(url: string) {
 export type MediaKind = "image" | "video" | "audio" | "file"
 export function kindOfUrl(url: string): MediaKind {
   if (!url) return "file"
-  if (url.includes('iframe.mediadelivery.net')) return "video" // NEW: Stream video
+  if (url.includes('iframe.mediadelivery.net')) return "video"
   if (url.match(/\.(mp4|mov|webm|avi)$/i)) return "video"
   if (url.match(/\.(mp3|wav|m4a|ogg)$/i)) return "audio"
   if (url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return "image"
@@ -48,37 +48,63 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
-// --- FIXED MediaView - NOW SUPPORT FAST STREAM ---
+// --- FIXED MediaView - FORCE STOP WHEN SCROLL COMOT ---
 export function MediaView({ url, kind, name, className }: { url: string, kind?: MediaKind, name?: string, className?: string }) {
   const k = (kind as MediaKind) || kindOfUrl(url)
   const videoRef = useRef<HTMLVideoElement>(null)
+  const iframeRef = useRef<HTMLIFrameElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
   const isStreamVideo = url?.includes('iframe.mediadelivery.net')
+  const savedSrc = useRef(url)
 
   useEffect(() => {
-    if (k !== "video" || isStreamVideo) return
-    const video = videoRef.current
-    if (!video) return
+    const wrap = wrapRef.current
+    if (!wrap) return
+
     const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
+      ([entry]) => {
+        // FOR NORMAL VIDEO
+        const video = videoRef.current
+        if (video && !entry.isIntersecting) {
+          video.pause()
+        }
+
+        // FOR BUNNY IFRAME - FORCE KILL SOUND!
+        const iframe = iframeRef.current
+        if (iframe && isStreamVideo) {
           if (!entry.isIntersecting) {
-            video.pause()
+            if (iframe.src !== "about:blank") {
+              savedSrc.current = iframe.src
+              iframe.src = "about:blank" // KILL SOUND BY FORCE!
+            }
+          } else {
+            if (iframe.src === "about:blank" && savedSrc.current) {
+              iframe.src = savedSrc.current // Restore when scroll back
+            }
           }
-        })
+        }
+
+        // FOR AUDIO
+        if (k === "audio" && !entry.isIntersecting) {
+          const audio = wrap.querySelector("audio")
+          if (audio) (audio as HTMLAudioElement).pause()
+        }
       },
-      { threshold: 0.5 }
+      { threshold: 0, rootMargin: "0px 0px -50px 0px" }
     )
-    observer.observe(video)
+
+    observer.observe(wrap)
     return () => observer.disconnect()
   }, [k, url, isStreamVideo])
 
   if (k === "file") return <FileChip url={url} name={name} className={className} />
   return (
-    <div className={`relative ${className}`}>
+    <div ref={wrapRef} className={`relative ${className}`}>
       {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" />}
       {k === "video" && (
         isStreamVideo ? (
           <iframe 
+            ref={iframeRef}
             src={url} 
             className="w-full rounded bg-black"
             style={{ height: '380px', border: 0 }}
