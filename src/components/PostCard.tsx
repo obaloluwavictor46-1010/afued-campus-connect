@@ -3,79 +3,59 @@ import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Heart, MessageCircle, Play, Pause, Music2 } from "lucide-react";
 import { Avatar } from "./AppShell";
-import { shortFaculty, type Post, type Profile } from "@/lib/supabase";
-import { MediaGallery, MediaView } from "./MediaView";
+import { shortFaculty, type Profile } from "@/lib/supabase";
+import { MediaGallery } from "./MediaView";
 
-// --- AUTO PAUSE VIDEO LIKE TIKTOK/FACEBOOK ---
+// VIDEO - MUST PAUSE WHEN COMOT
 function AutoPauseVideo({ src }: { src: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
-
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
-
-    const observer = new IntersectionObserver(
-      (entries) => {
-        entries.forEach((entry) => {
-          if (!entry.isIntersecting) {
-            video.pause(); // Scroll comot = pause immediately!
-          }
-        });
-      },
-      { threshold: 0.2 } // once 20% comot screen, pause
+    const obs = new IntersectionObserver(
+      ([e]) => { if (!e.isIntersecting) video.pause(); },
+      { threshold: 0, rootMargin: "0px 0px -100px 0px" }
     );
-
-    observer.observe(video);
-    return () => observer.disconnect();
+    obs.observe(video);
+    return () => obs.disconnect();
   }, [src]);
-
-  return (
-    <video
-      ref={videoRef}
-      src={src}
-      controls
-      playsInline
-      preload="metadata"
-      className="w-full max-h-[480px] bg-black"
-    />
-  );
+  return <video ref={videoRef} src={src} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />;
 }
 
-// --- AUTO PAUSE BUNNY IFRAME (Stream) ---
+// IFRAME - FORCE KILL SOUND WHEN COMOT
 function AutoPauseBunnyIframe({ src }: { src: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
-  const [isVisible, setIsVisible] = useState(true);
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+  const savedSrc = useRef(src);
 
   useEffect(() => {
-    const el = wrapRef.current;
-    if (!el) return;
-    const observer = new IntersectionObserver(
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const obs = new IntersectionObserver(
       ([entry]) => {
-        // If comot screen, hide iframe = stop audio!
-        setIsVisible(entry.isIntersecting);
+        const iframe = iframeRef.current;
+        if (!iframe) return;
+        if (!entry.isIntersecting) {
+          // THIS LINE KILL SOUND BY FORCE!
+          if (iframe.src !== "about:blank") {
+            savedSrc.current = iframe.src;
+            iframe.src = "about:blank";
+          }
+        } else {
+          if (iframe.src === "about:blank") {
+            iframe.src = savedSrc.current;
+          }
+        }
       },
-      { threshold: 0.2 }
+      { threshold: 0 }
     );
-    observer.observe(el);
-    return () => observer.disconnect();
+    obs.observe(wrap);
+    return () => obs.disconnect();
   }, []);
 
   return (
     <div ref={wrapRef} className="w-full bg-black" style={{ height: '380px' }}>
-      {isVisible ? (
-        <iframe
-          src={src}
-          className="w-full h-full"
-          style={{ border: 0 }}
-          allow="autoplay; fullscreen"
-          allowFullScreen
-          loading="lazy"
-        />
-      ) : (
-        <div className="w-full h-full flex items-center justify-center text-white/60 text-sm">
-          Paused - scroll back to play
-        </div>
-      )}
+      <iframe ref={iframeRef} src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen />
     </div>
   );
 }
@@ -89,24 +69,22 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
 
-  // --- AUTO PAUSE MUSIC WHEN SCROLL COMOT ---
   useEffect(() => {
     const card = cardRef.current;
     const audio = audioRef.current;
-    if (!card || !audio) return;
-
-    const observer = new IntersectionObserver(
+    if (!card) return;
+    const obs = new IntersectionObserver(
       ([entry]) => {
-        if (!entry.isIntersecting && playing) {
+        if (!entry.isIntersecting && audio) {
           audio.pause();
           setPlaying(false);
         }
       },
-      { threshold: 0.2 }
+      { threshold: 0 }
     );
-    observer.observe(card);
-    return () => observer.disconnect();
-  }, [playing]);
+    obs.observe(card);
+    return () => obs.disconnect();
+  }, []);
   
   const toggle = () => {
     localStorage.setItem(key, liked ? "0" : "1");
@@ -117,7 +95,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const videoUrl = (post as any).video_url as string | undefined;
   const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
   
-  // --- FIXED BUNNY IMAGE PARSER - NO MORE mediaOf ---
   let imageUrls: string[] = [];
   try {
     const raw = post.image_urls || post.image_url || [];
@@ -126,8 +103,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       imageUrls = Array.isArray(parsed) ? parsed : [parsed];
     } else if (Array.isArray(raw)) {
       imageUrls = raw;
-    } else if (typeof raw === 'string' && raw.startsWith('http')) {
-      imageUrls = [raw];
     }
   } catch {
     const raw = post.image_urls || post.image_url || "";
@@ -137,6 +112,9 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
 
   const togglePlay = () => {
     if (!audioRef.current) return;
+    document.querySelectorAll('audio, video').forEach(el => {
+      if (el !== audioRef.current) (el as HTMLMediaElement).pause();
+    });
     if (playing) {
       audioRef.current.pause();
       setPlaying(false);
@@ -167,10 +145,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       <div className="relative">
         <MediaGallery urls={imageUrls} />
         {musicUrl && imageUrls.length > 0 && (
-          <button 
-            onClick={togglePlay}
-            className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-white backdrop-blur text-xs font-semibold hover:bg-black/80"
-          >
+          <button onClick={togglePlay} className="absolute bottom-3 left-3 flex items-center gap-2 rounded-full bg-black/70 px-3 py-1.5 text-white backdrop-blur text-xs font-semibold hover:bg-black/80">
             {playing ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             <Music2 className="h-3 w-3" />
             {playing ? "Pause music" : "Play music"}
@@ -179,11 +154,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
 
       {videoUrl && !imageUrls.length && (
-        isStreamVideo ? (
-          <AutoPauseBunnyIframe src={videoUrl} />
-        ) : (
-          <AutoPauseVideo src={videoUrl} />
-        )
+        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} /> : <AutoPauseVideo src={videoUrl} />
       )}
 
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
@@ -198,9 +169,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         </div>
       )}
 
-      {musicUrl && (
-        <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />
-      )}
+      {musicUrl && <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />}
 
       <div className="flex items-center gap-5 px-4 py-3">
         <button onClick={toggle} className="flex items-center gap-1.5 text-sm font-medium">
@@ -214,4 +183,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-      }
+}
