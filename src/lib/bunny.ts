@@ -1,4 +1,4 @@
-// FINAL BUNNY.TS - AFUED - 3 MINS VIDEO + BOLD VOICE
+// FINAL BUNNY.TS - AFUED - 0-45s INSTANT, 50s+ STREAM, 3 MINS MAX
 // Copy everything comot old one, paste this
 
 const BUNNY_ENDPOINT = import.meta.env.VITE_BUNNY_ENDPOINT;
@@ -10,6 +10,24 @@ const STREAM_API_KEY = import.meta.env.VITE_BUNNY_STREAM_API_KEY;
 
 type ProgressCb = (percent: number) => void;
 
+function getVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith("video/")) return resolve(0);
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      resolve(v.duration || 0);
+    };
+    v.onerror = () => {
+      URL.revokeObjectURL(url);
+      resolve(0);
+    };
+    v.src = url;
+  });
+}
+
 // This na the main function wey your app dey call
 export const uploadToBunny = async (
   file: File,
@@ -18,36 +36,50 @@ export const uploadToBunny = async (
 ): Promise<string> => {
   if (!file) throw new Error("No file selected");
 
-  // FIX: Check keys separately - video no need Storage, picture no need Stream
   const isVideoFile = folder === "videos" || file.type.startsWith("video/");
-  
-  if (isVideoFile) {
-    if (!STREAM_LIB_ID || !STREAM_API_KEY) {
-      throw new Error("Stream keys missing - add VITE_BUNNY_STREAM_LIBRARY_ID & VITE_BUNNY_STREAM_API_KEY to Vercel");
-    }
-  } else {
+  const duration = isVideoFile ? await getVideoDuration(file) : 0;
+
+  // Max 3 mins = 180 sec for all videos
+  if (isVideoFile && duration > 180) {
+    throw new Error(`Video too long! Max 3 mins. Yours na ${Math.round(duration)}s`);
+  }
+
+  // --- NEW LOGIC LIKE FACEBOOK ---
+  // 0-45 sec = INSTANT STORAGE (No Processing!)
+  const isShortVideo = isVideoFile && duration <= 45;
+
+  if (isShortVideo) {
     if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
       throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
     }
+    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+    const fileName = `${folder}/${Date.now()}-${safeName}`;
+    const url = `${BUNNY_ENDPOINT}/${fileName}`;
+
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open('PUT', url);
+      xhr.setRequestHeader('AccessKey', BUNNY_ACCESS_KEY);
+      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
+      };
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(`${BUNNY_PUBLIC_URL}/${fileName}`);
+        } else {
+          reject(new Error(`Storage fail ${xhr.status}: ${xhr.responseText}`));
+        }
+      };
+      xhr.onerror = () => reject(new Error('Storage network fail'));
+      xhr.send(file);
+    });
   }
 
-  // 1. VIDEO = Go STREAM (Bunny go compress to small size automatically - GOOD)
+  // 50 sec+ = STREAM (With Processing to save money)
   if (isVideoFile) {
-    
-    // Check 3 mins = 180 sec for channel/group
-    const duration = await new Promise<number>((resolve) => {
-      const v = document.createElement('video');
-      v.preload = 'metadata';
-      v.onloadedmetadata = () => {
-        URL.revokeObjectURL(v.src);
-        resolve(v.duration);
-      };
-      v.onerror = () => resolve(0);
-      v.src = URL.createObjectURL(file);
-    });
-
-    if (duration > 180) {
-      throw new Error(`Video too long! Max 3 mins. Yours na ${Math.round(duration)}s`);
+    if (!STREAM_LIB_ID || !STREAM_API_KEY) {
+      throw new Error("Stream keys missing - add VITE_BUNNY_STREAM_LIBRARY_ID & VITE_BUNNY_STREAM_API_KEY to Vercel");
     }
 
     // Create video for Stream
@@ -67,7 +99,7 @@ export const uploadToBunny = async (
     
     const { guid: videoId } = await createRes.json();
 
-    // Upload original file - NO CANVAS, Bunny go handle compress
+    // Upload original file - Bunny go handle compress
     await new Promise<void>((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', `https://video.bunnycdn.com/library/${STREAM_LIB_ID}/videos/${videoId}`);
@@ -89,7 +121,10 @@ export const uploadToBunny = async (
     return `https://iframe.mediadelivery.net/embed/${STREAM_LIB_ID}/${videoId}`;
   }
 
-  // 2. VOICE / PICTURE / CAR / DOC = Go STORAGE (no compress)
+  // VOICE / PICTURE / CAR / DOC = Go STORAGE (no compress)
+  if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
+    throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
+  }
   const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
   const fileName = `${folder}/${Date.now()}-${safeName}`;
   const url = `${BUNNY_ENDPOINT}/${fileName}`;
