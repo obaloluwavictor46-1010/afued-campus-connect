@@ -298,15 +298,23 @@ export const uploadToBunny = async (
     if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
       throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
     }
-    const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-    const fileName = `${folder}/${Date.now()}-${safeName}`;
+    // ===== VOICE FIX 1: Handle missing name + .webm force =====
+    const rawName1 = file.name && file.name.includes(".") ? file.name : `voice-${Date.now()}.webm`;
+    const safeName = rawName1.replace(/[^a-zA-Z0-9.-]/g, "_");
+    let finalSafe1 = safeName;
+    if (file.type.startsWith("audio/") && !finalSafe1.toLowerCase().endsWith(".webm")) {
+      finalSafe1 = finalSafe1.replace(/\.\w+$/, "") + ".webm";
+    }
+    const fileName = `${folder}/${Date.now()}-${finalSafe1}`;
     const url = `${BUNNY_ENDPOINT}/${fileName}`;
 
     return new Promise((resolve, reject) => {
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url);
       xhr.setRequestHeader('AccessKey', BUNNY_ACCESS_KEY);
-      xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+      // ===== VOICE FIX 2: Simple content-type for Bunny =====
+      const ct1 = file.type.startsWith("audio/") ? "audio/webm" : (file.type.split(";")[0] || "application/octet-stream");
+      xhr.setRequestHeader('Content-Type', ct1);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
       };
@@ -366,15 +374,23 @@ export const uploadToBunny = async (
   if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
     throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
   }
-  const safeName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
-  const fileName = `${folder}/${Date.now()}-${safeName}`;
+  // ===== VOICE FIX 1b: Same fix for voice/images =====
+  const rawName2 = file.name && file.name.includes(".") ? file.name : `voice-${Date.now()}.webm`;
+  const safeName2 = rawName2.replace(/[^a-zA-Z0-9.-]/g, "_");
+  let finalSafe2 = safeName2;
+  if (file.type.startsWith("audio/") && !finalSafe2.toLowerCase().endsWith(".webm")) {
+    finalSafe2 = finalSafe2.replace(/\.\w+$/, "") + ".webm";
+  }
+  const fileName = `${folder}/${Date.now()}-${finalSafe2}`;
   const url = `${BUNNY_ENDPOINT}/${fileName}`;
 
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
     xhr.setRequestHeader('AccessKey', BUNNY_ACCESS_KEY);
-    xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+    // ===== VOICE FIX 2b: Simple content-type =====
+    const ct2 = file.type.startsWith("audio/") ? "audio/webm" : (file.type.split(";")[0] || "application/octet-stream");
+    xhr.setRequestHeader('Content-Type', ct2);
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) onProgress(Math.round((e.loaded / e.total) * 100));
     };
