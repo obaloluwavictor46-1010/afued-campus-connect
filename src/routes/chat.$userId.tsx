@@ -30,6 +30,16 @@ function ChatPage(){
   const fileRef = useRef<HTMLInputElement>(null)
   const camRef = useRef<HTMLInputElement>(null)
 
+  // === DELETE STATE ===
+  const [selectedMsg, setSelectedMsg] = useState<any>(null)
+  const [showDeleteMenu, setShowDeleteMenu] = useState(false)
+  const pressTimer = useRef<any>(null)
+
+  // === WHATSAPP EDITOR STATE ===
+  const [pendingFile, setPendingFile] = useState<any>(null)
+  const [pendingUrl, setPendingUrl] = useState<string | null>(null)
+  const [pendingType, setPendingType] = useState<string>('image')
+
   useEffect(()=>{
     let mounted = true
     async function boot(){
@@ -83,8 +93,17 @@ function ChatPage(){
             setMessages(prev=>{
               const filtered = prev.filter(m=> !String(m.id).startsWith('temp-'))
               if(filtered.some(m=>m.id===newMsg.id)) return filtered
+              // If I deleted it for me, don't show it
+              if((newMsg.deleted_for||[]).includes(me?.id)) return filtered
               return [...filtered, newMsg]
             })
+          }
+        )
+        .on('postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'messages', filter: `conversation_id=eq.${cId}` },
+          (payload)=>{
+            const updated = payload.new as any
+            setMessages(prev=> prev.map(m=> m.id===updated.id ? updated : m))
           }
         )
         .subscribe()
@@ -93,9 +112,42 @@ function ChatPage(){
 
   async function loadMsgs(cId:string){
     try{
+      const { data: {user} } = await supabase.auth.getUser()
       const { data } = await supabase.from('messages').select('*').eq('conversation_id', cId).order('created_at', {ascending:true})
-      setMessages(data||[])
+      const filtered = (data||[]).filter((m:any)=> !(m.deleted_for||[]).includes(user?.id))
+      setMessages(filtered)
     }catch(e){ console.log(e) }
+  }
+
+  // === DELETE FUNCTIONS ===
+  function onPressStart(msg:any){
+    pressTimer.current = setTimeout(()=>{
+      setSelectedMsg(msg)
+      setShowDeleteMenu(true)
+    }, 500)
+  }
+  function onPressEnd(){ if(pressTimer.current) clearTimeout(pressTimer.current) }
+
+  async function deleteForMe(){
+    if(!selectedMsg || !me?.id) return
+    if(String(selectedMsg.id).startsWith('temp-')){ setMessages(prev=>prev.filter(m=>m.id!==selectedMsg.id)); setShowDeleteMenu(false); return }
+    const newList = [...(selectedMsg.deleted_for||[]), me.id]
+    await supabase.from('messages').update({ deleted_for: newList }).eq('id', selectedMsg.id)
+    setMessages(prev=>prev.filter(m=>m.id!==selectedMsg.id))
+    setShowDeleteMenu(false)
+  }
+
+  async function deleteForEveryone(){
+    if(!selectedMsg) return
+    if(selectedMsg.sender_id !== me?.id){ alert("You can only Delete for Everyone your own message"); return }
+    if(String(selectedMsg.id).startsWith('temp-')){ setMessages(prev=>prev.filter(m=>m.id!==selectedMsg.id)); setShowDeleteMenu(false); return }
+    await supabase.from('messages').update({ 
+      deleted_for_everyone: true,
+      content: '🚫 This message was deleted',
+      deleted_at: new Date().toISOString()
+    }).eq('id', selectedMsg.id)
+    setMessages(prev=>prev.map(m=> m.id===selectedMsg.id ? {...m, deleted_for_everyone:true, content:'🚫 This message was deleted'} : m))
+    setShowDeleteMenu(false)
   }
 
   async function send(type='text', content=''){
@@ -126,23 +178,70 @@ function ChatPage(){
     }
   }
 
-  async function handleUpload(e:any, type='image'){
+  // When user picks image/video, open WhatsApp Editor first, don't send straight
+  function handlePick(e:any, type='image'){
     const file = e.target.files[0]; if(!file) return
     if(file.size > 50*1024*1024){ e.target.value=''; return }
     const localUrl = URL.createObjectURL(file)
-    const tempId = `temp-${Date.now()}`
     const isVideoFile = file.type.startsWith('video/')
-    const displayType = isVideoFile ? 'video' : type
-    
-    setMessages(prev=>[...prev, { id: tempId, sender_id: me?.id, conversation_id: convId, type: displayType, content: localUrl, isUploading: true, created_at: new Date().toISOString() }])
+    setPendingFile(file)
+    setPendingUrl(localUrl)
+    setPendingType(isVideoFile ? 'video' : type)
+    e.target.value = ''
+  }
+
+  async function handleUploadEdited(editedDataUrl:string, caption:string){
+    if(!pendingFile) return
+    const file = pendingFile
+    const tempId = `temp-${Date.now()}`
+    // Convert edited image back to file if it's image
+    let fileToUpload = file
+    if(pendingType==='image' && editedDataUrl.startsWith('data:image')){
+      const res = await fetch(editedDataUrl)
+      const blob = await res.blob()
+      fileToUpload = new File([blob], file.name || `edited-${Date.now()}.jpg`, {type:'image/jpeg'})
+    }
+    const localUrl = editedDataUrl || URL.createObjectURL(fileToUpload)
+    setMessages(prev=>[...prev, { id: tempId, sender_id: me?.id, conversation_id: convId, type: pendingType, content: localUrl, isUploading: true, created_at: new Date().toISOString() }])
+    setPendingFile(null); setPendingUrl(null)
     
     try{
       setUploading(true); setProgress(0)
-      const url = await uploadToBunny(file, isVideoFile ? 'videos' : type==='image' ? 'chat_images' : 'files', (p)=> setProgress(p))
+      const url = await uploadToBunny(fileToUpload, pendingType==='video' ? 'videos' : pendingType==='image' ? 'chat_images' : 'files', (p)=> setProgress(p))
       setMessages(prev=>prev.map(m=>m.id===tempId ? {...m, content: url, isUploading: false} : m))
       const { data: {user} } = await supabase.auth.getUser()
       if(user?.id && convId){
-        await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type: displayType, content: url})
+        await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type: pendingType, content: url})
+        if(caption?.trim()){
+          await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type:'text', content: caption})
+        }
+      }
+      setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 600)
+    }catch(err:any){
+      console.log(err)
+      setMessages(prev=>prev.filter(m=>m.id!==tempId))
+    }finally{
+      setUploading(false); setProgress(0)
+    }
+  }
+
+  async function handleUpload(e:any, type='image'){
+    // For files (pdf etc) send straight, no editor. For image/video use editor.
+    const file = e.target.files[0]; if(!file) return
+    if(file.type.startsWith('image/') || file.type.startsWith('video/')){
+      handlePick(e, type); return
+    }
+    if(file.size > 50*1024*1024){ e.target.value=''; return }
+    const localUrl = URL.createObjectURL(file)
+    const tempId = `temp-${Date.now()}`
+    setMessages(prev=>[...prev, { id: tempId, sender_id: me?.id, conversation_id: convId, type, content: localUrl, isUploading: true, created_at: new Date().toISOString() }])
+    try{
+      setUploading(true); setProgress(0)
+      const url = await uploadToBunny(file, 'files', (p)=> setProgress(p))
+      setMessages(prev=>prev.map(m=>m.id===tempId ? {...m, content: url, isUploading: false} : m))
+      const { data: {user} } = await supabase.auth.getUser()
+      if(user?.id && convId){
+        await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type, content: url})
       }
       setTimeout(()=> setMessages(prev=>prev.filter(m=>m.id!==tempId)), 600)
     }catch(err:any){
@@ -171,18 +270,15 @@ function ChatPage(){
       streamRef.current = stream
       const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({sampleRate:44100})
       ctxRef.current = audioCtx
-
       const analyser = audioCtx.createAnalyser()
       analyser.fftSize = 256
       const src = audioCtx.createMediaStreamSource(stream)
       src.connect(analyser)
       analyserRef.current = analyser
       const data = new Uint8Array(analyser.frequencyBinCount)
-
       const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm'
       const rec = new MediaRecorder(stream, { mimeType, audioBitsPerSecond: 128000 })
       recRef.current = rec
-
       const tick = () => {
         try{
           if(analyserRef.current){
@@ -194,7 +290,6 @@ function ChatPage(){
         if(recRef.current?.state==='recording') requestAnimationFrame(tick)
       }
       tick()
-
       const chunks:any[]=[]
       rec.ondataavailable = e=>{ if(e.data.size>0) chunks.push(e.data) }
       rec.onstop = async()=>{
@@ -219,12 +314,10 @@ function ChatPage(){
         }finally{ setUploading(false); setProgress(0); try{ URL.revokeObjectURL(localUrl) }catch{} }
         cleanupRec()
       }
-
       rec.start(100)
       setRecording(true)
       setRecTime(0)
       timerRef.current = setInterval(()=>setRecTime(t=>t+1),1000)
-
     }catch(e){ console.log(e); cleanupRec() }
   }
 
@@ -246,7 +339,6 @@ function ChatPage(){
 
   return (
     <div style={{maxWidth:480, margin:'0 auto', height:'100vh', display:'flex', flexDirection:'column', background:'#efeae2'}}>
-      {/* FACEBOOK STYLE HEADER - TAP TO PROFILE */}
       <div style={{padding:'10px 12px', background:'white', borderBottom:'1px solid #e2e8f0', display:'flex', alignItems:'center', gap:10, position:'sticky', top:0, zIndex:10}}>
         <Link to="/chat" style={{padding:4, textDecoration:'none', color:'black'}}><ArrowLeft size={20}/></Link>
         <Link to={`/u/${otherUserId}`} style={{display:'flex', alignItems:'center', gap:10, textDecoration:'none', color:'black', flex:1}}>
@@ -262,19 +354,32 @@ function ChatPage(){
       <div ref={listRef} style={{flex:1, overflowY:'auto', padding:'12px 8px 90px'}}>
         {messages.map(m=>(
           <div key={m.id} style={{display:'flex', justifyContent: m.sender_id===me?.id?'flex-end':'flex-start', margin:'4px 0'}}>
-            <div style={{
-              maxWidth:'76%', padding:'8px 10px', borderRadius: m.sender_id===me?.id ? '18px 18px 0 18px' : '18px 18px 18px 0',
-              background: m.sender_id===me?.id ? '#0084ff' : 'white',
-              color: m.sender_id===me?.id ? 'white' : '#111b21',
-              boxShadow:'0 1px 0.5px rgba(0,0,0,0.13)',
-              opacity: (m as any).isUploading ? 0.7 : 1
-            }}>
-              {m.type==='text' && <span style={{fontSize:15, lineHeight:'19px', wordBreak:'break-word'}}>{m.content}</span>}
-              {m.type==='image' && <img src={m.content} style={{width:220, borderRadius:12, display:'block', maxHeight:320, objectFit:'cover'}} loading="lazy"/>}
-              {m.type==='file' && <a href={m.content} target="_blank" rel="noreferrer" style={{color: m.sender_id===me?.id?'white':'#0084ff', fontSize:14, textDecoration:'none'}}>📎 Open File</a>}
-              {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} />}
-              {m.type==='video' && <video src={m.content} controls playsInline style={{width:230, borderRadius:12, background:'black', maxHeight:320}} />}
-              {(m as any).isUploading && <div style={{fontSize:10, marginTop:4}}>⏳</div>}
+            <div 
+              onMouseDown={()=>onPressStart(m)}
+              onMouseUp={onPressEnd}
+              onMouseLeave={onPressEnd}
+              onTouchStart={()=>onPressStart(m)}
+              onTouchEnd={onPressEnd}
+              style={{
+                maxWidth:'76%', padding:'8px 10px', borderRadius: m.sender_id===me?.id ? '18px 18px 0 18px' : '18px 18px 18px 0',
+                background: m.sender_id===me?.id ? '#0084ff' : 'white',
+                color: m.sender_id===me?.id ? 'white' : '#111b21',
+                boxShadow:'0 1px 0.5px rgba(0,0,0,0.13)',
+                opacity: (m as any).isUploading ? 0.7 : 1,
+                userSelect:'none', WebkitUserSelect:'none' as any, touchAction:'manipulation'
+              }}>
+              {m.deleted_for_everyone ? (
+                <i style={{fontSize:13, opacity:0.7}}>🚫 This message was deleted</i>
+              ) : (
+                <>
+                  {m.type==='text' && <span style={{fontSize:15, lineHeight:'19px', wordBreak:'break-word'}}>{m.content}</span>}
+                  {m.type==='image' && <img src={m.content} style={{width:220, borderRadius:12, display:'block', maxHeight:320, objectFit:'cover'}} loading="lazy"/>}
+                  {m.type==='file' && <a href={m.content} target="_blank" rel="noreferrer" style={{color: m.sender_id===me?.id?'white':'#0084ff', fontSize:14, textDecoration:'none'}}>📎 Open File</a>}
+                  {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} />}
+                  {m.type==='video' && <video src={m.content} controls playsInline style={{width:230, borderRadius:12, background:'black', maxHeight:320}} />}
+                  {(m as any).isUploading && <div style={{fontSize:10, marginTop:4}}>⏳</div>}
+                </>
+              )}
             </div>
           </div>
         ))}
@@ -285,6 +390,26 @@ function ChatPage(){
           </div>
         )}
       </div>
+
+      {/* DELETE MENU - WhatsApp style */}
+      {showDeleteMenu && (
+        <>
+          <div onClick={()=>setShowDeleteMenu(false)} style={{position:'fixed', inset:0, background:'rgba(0,0,0,0.4)', zIndex:90}} />
+          <div style={{position:'fixed', bottom:0, left:0, right:0, maxWidth:480, margin:'0 auto', background:'white', padding:16, borderRadius:'16px 16px 0 0', zIndex:100, boxShadow:'0 -2px 20px rgba(0,0,0,0.2)'}}>
+            <div style={{textAlign:'center', fontWeight:'700', marginBottom:12, fontSize:15}}>Delete message?</div>
+            <button onClick={deleteForMe} style={{width:'100%', padding:13, marginBottom:8, border:'none', background:'#f0f2f5', borderRadius:10, fontSize:15}}>Delete for Me</button>
+            {selectedMsg?.sender_id === me?.id && (
+              <button onClick={deleteForEveryone} style={{width:'100%', padding:13, marginBottom:8, border:'none', background:'#ffebee', color:'#d32f2f', borderRadius:10, fontWeight:'600', fontSize:15}}>Delete for Everyone</button>
+            )}
+            <button onClick={()=>setShowDeleteMenu(false)} style={{width:'100%', padding:13, border:'none', background:'white', borderRadius:10, fontSize:15}}>Cancel</button>
+          </div>
+        </>
+      )}
+
+      {/* WHATSAPP EDITOR */}
+      {pendingUrl && (
+        <WhatsAppEditor imageUrl={pendingUrl} isVideo={pendingType==='video'} onCancel={()=>{setPendingUrl(null); setPendingFile(null)}} onSend={handleUploadEdited} />
+      )}
 
       {recording && (
         <div style={{position:'fixed', bottom:0, left:0, right:0, maxWidth:480, margin:'0 auto', background:'#202c33', display:'flex', alignItems:'center', gap:10, padding:'12px 16px', zIndex:50}}>
@@ -321,7 +446,6 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
   const [pct, setPct] = useState(0)
   const audioRef = useRef<HTMLAudioElement|null>(null)
   const [dur, setDur] = useState(0)
-
   const toggle = ()=>{
     try{
       if(!audioRef.current){
@@ -336,9 +460,7 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
       else { audioRef.current?.play().catch(()=>{}); setPlaying(true) }
     }catch(e){ console.log(e) }
   }
-
   useEffect(()=>{ return ()=>{ try{ audioRef.current?.pause() }catch{} } },[])
-
   return (
     <div style={{display:'flex', alignItems:'center', gap:10, minWidth:180}}>
       <button onClick={toggle} style={{width:36, height:36, borderRadius:'50%', border:'none', background: isMe ? '#0064d1' : '#0084ff', display:'flex', alignItems:'center', justifyContent:'center'}}>
@@ -347,6 +469,147 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
       <div style={{flex:1}}>
         <div style={{height:3, background: isMe ? 'rgba(255,255,255,0.4)' : '#e4e6eb', borderRadius:2}}><div style={{width:`${pct}%`, height:3, background: isMe ? 'white' : '#0084ff', borderRadius:2, transition:'width 0.1s'}}/></div>
         <div style={{fontSize:10, marginTop:4, opacity:0.8}}>{dur ? `${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')}` : '0:00'} • 🔊</div>
+      </div>
+    </div>
+  )
+}
+
+// === WHATSAPP EDITOR - LIKE WHATSAPP ===
+function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
+  const canvasRef = useRef<any>(null)
+  const [tool, setTool] = useState<'pen'|'emoji'>('pen')
+  const [color, setColor] = useState('#ff0000')
+  const [brushSize, setBrushSize] = useState(5)
+  const [isDrawing, setIsDrawing] = useState(false)
+  const [caption, setCaption] = useState('')
+  const [history, setHistory] = useState<string[]>([])
+  const COLORS = ['#ff0000','#ff9500','#ffeb00','#00e676','#00b0ff','#ff4081','#ffffff','#000000','#9c27b0']
+  const EMOJIS = ['😂','❤️','🔥','😍','👍','😮','🥰','😭','🙏','🎉','💯','😎']
+  const [emojis, setEmojis] = useState<any[]>([])
+  const [texts, setTexts] = useState<any[]>([])
+
+  useEffect(()=>{
+    if(isVideo) return
+    const img = new Image()
+    img.crossOrigin = 'anonymous'
+    img.src = imageUrl
+    img.onload = ()=>{
+      const canvas = canvasRef.current
+      if(!canvas) return
+      canvas.width = img.width
+      canvas.height = img.height
+      const ctx = canvas.getContext('2d')
+      ctx.drawImage(img, 0, 0)
+    }
+  },[imageUrl, isVideo])
+
+  function saveHistory(){
+    const canvas = canvasRef.current
+    if(canvas) setHistory(prev => [...prev, canvas.toDataURL()])
+  }
+  function getPos(e:any){
+    const canvas = canvasRef.current
+    const rect = canvas.getBoundingClientRect()
+    const cx = e.clientX ?? e.touches?.[0]?.clientX
+    const cy = e.clientY ?? e.touches?.[0]?.clientY
+    const x = (cx - rect.left) * (canvas.width / rect.width)
+    const y = (cy - rect.top) * (canvas.height / rect.height)
+    return {x,y}
+  }
+  function startDraw(e:any){
+    if(tool!=='pen' || isVideo) return
+    saveHistory()
+    setIsDrawing(true)
+    const {x,y} = getPos(e)
+    const ctx = canvasRef.current.getContext('2d')
+    ctx.strokeStyle = color
+    ctx.lineWidth = brushSize * 2
+    ctx.lineCap = 'round'
+    ctx.beginPath()
+    ctx.moveTo(x,y)
+  }
+  function draw(e:any){
+    if(!isDrawing) return
+    const {x,y} = getPos(e)
+    const ctx = canvasRef.current.getContext('2d')
+    ctx.lineTo(x,y)
+    ctx.stroke()
+  }
+  function endDraw(){ setIsDrawing(false) }
+  function undo(){
+    if(history.length===0) return
+    const last = history[history.length-1]
+    const img = new Image()
+    img.src = last
+    img.onload = ()=>{
+      const canvas = canvasRef.current
+      const ctx = canvas.getContext('2d')
+      ctx.clearRect(0,0,canvas.width, canvas.height)
+      ctx.drawImage(img,0,0)
+    }
+    setHistory(prev => prev.slice(0,-1))
+  }
+  function addText(){
+    const t = prompt("Type text to add on image:")
+    if(!t) return
+    setTexts(prev=>[...prev, {text:t, x:60, y:80+prev.length*40, color}])
+  }
+  function addEmoji(emoji:string){
+    setEmojis(prev=>[...prev, {emoji, x:60+prev.length*40, y:140}])
+  }
+  async function handleSend(){
+    if(isVideo){ onSend(imageUrl, caption); return }
+    const canvas = canvasRef.current
+    const ctx = canvas.getContext('2d')
+    texts.forEach((t:any)=>{ ctx.font = `bold 32px Arial`; ctx.fillStyle = t.color; ctx.fillText(t.text, t.x, t.y) })
+    emojis.forEach((e:any)=>{ ctx.font = '60px Arial'; ctx.fillText(e.emoji, e.x, e.y) })
+    const finalImage = canvas.toDataURL('image/jpeg', 0.9)
+    onSend(finalImage, caption)
+  }
+
+  return (
+    <div style={{position:'fixed', inset:0, background:'black', zIndex:1000, display:'flex', flexDirection:'column'}}>
+      <div style={{display:'flex', justifyContent:'space-between', padding:'12px', background:'#111'}}>
+        <button onClick={onCancel} style={{color:'white', background:'none', border:'none', fontSize:20}}>✕</button>
+        <div style={{display:'flex', gap:16}}>
+          <button onClick={()=>setTool('emoji')} style={{color: tool==='emoji'?'#00e676':'white', background:'none', border:'none', fontSize:20}}>😊</button>
+          <button onClick={addText} style={{color:'white', background:'none', border:'none', fontSize:20, fontWeight:'bold'}}>T</button>
+          <button onClick={()=>setTool('pen')} style={{color: tool==='pen'?'#00e676':'white', background:'none', border:'none', fontSize:20}}>✏️</button>
+          <button onClick={undo} style={{color:'white', background:'none', border:'none', fontSize:20}}>↩️</button>
+        </div>
+      </div>
+      <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', position:'relative'}}>
+        {isVideo ? (
+          <video src={imageUrl} controls playsInline style={{maxWidth:'100%', maxHeight:'100%'}} />
+        ) : (
+          <canvas ref={canvasRef} onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw} style={{maxWidth:'100%', maxHeight:'100%', touchAction:'none'}} />
+        )}
+        {texts.map((t:any,i:number)=>(<div key={i} style={{position:'absolute', left:t.x, top:120+t.y, color:t.color, fontSize:26, fontWeight:'bold', textShadow:'0 2px 4px black'}}>{t.text}</div>))}
+        {emojis.map((e:any,i:number)=>(<div key={i} style={{position:'absolute', left:e.x, top:150+e.y, fontSize:36}}>{e.emoji}</div>))}
+      </div>
+      {tool==='emoji' && (
+        <div style={{background:'#222', padding:12, display:'flex', gap:8, flexWrap:'wrap'}}>
+          {EMOJIS.map(e=><button key={e} onClick={()=>addEmoji(e)} style={{fontSize:28, background:'none', border:'none'}}>{e}</button>)}
+        </div>
+      )}
+      {tool==='pen' && !isVideo && (
+        <div style={{background:'#111', padding:12}}>
+          <div style={{display:'flex', gap:8, overflowX:'auto', marginBottom:10}}>
+            {COLORS.map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:28, height:28, borderRadius:'50%', background:c, border: color===c ? '3px solid white' : '2px solid #555', cursor:'pointer', flexShrink:0}} />))}
+          </div>
+          <div style={{display:'flex', alignItems:'center', gap:10, color:'white'}}>
+            <span style={{fontSize:12}}>Thin</span>
+            <input type="range" min={1} max={20} value={brushSize} onChange={e=>setBrushSize(Number(e.target.value))} style={{flex:1}} />
+            <span style={{fontSize:12}}>Thick</span>
+            <div style={{width: brushSize*2, height: brushSize*2, borderRadius:'50%', background:color}} />
+          </div>
+          <div style={{color:'#aaa', fontSize:12, marginTop:6}}>✏️ Draw with finger to cover / hide anything - like WhatsApp pen</div>
+        </div>
+      )}
+      {isVideo && <div style={{background:'#111', color:'#aaa', padding:10, fontSize:12, textAlign:'center'}}>Video: You can add caption below. Paint for video coming next.</div>}
+      <div style={{background:'#111', padding:'12px', display:'flex', gap:8, alignItems:'center'}}>
+        <input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Add a caption..." style={{flex:1, padding:'10px 14px', borderRadius:20, border:'none', background:'#222', color:'white'}} />
+        <button onClick={handleSend} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:20}}>➤</button>
       </div>
     </div>
   )
