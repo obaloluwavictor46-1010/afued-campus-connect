@@ -411,27 +411,30 @@ export const getBunnyStreamPlayUrl = (idOrUrl: string) => {
   return `https://iframe.mediadelivery.net/embed/${STREAM_LIB_ID}/${idOrUrl}`;
 };
 
+// ===== FIXED VOICE - CLEAR LIKE FACEBOOK MESSENGER - NO TV NOISE =====
 export const startBoldVoiceRecording = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
-      echoCancellation: false,
-      noiseSuppression: false,
+      echoCancellation: true,  // FIX: was false, now true = clear
+      noiseSuppression: true,   // FIX: was false, now true = no TV noise
       autoGainControl: true,
-      sampleRate: 48000,
+      sampleRate: 44100,        // FIX: was 48000 noisy, now 44100 clear
       channelCount: 1
     }
   });
 
-  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 48000 });
+  const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
   const source = audioCtx.createMediaStreamSource(stream);
   const gain = audioCtx.createGain();
-  gain.gain.value = 2.5;
+  gain.gain.value = 1.0; // FIX: was 2.5 too loud, now 1.0 = WhatsApp loudness
   const dest = audioCtx.createMediaStreamDestination();
   source.connect(gain);
   gain.connect(dest);
 
+  const mimeType = MediaRecorder.isTypeSupported('audio/webm;codecs=opus') ? 'audio/webm;codecs=opus' : 'audio/webm';
+
   const rec = new MediaRecorder(dest.stream, {
-    mimeType: 'audio/webm;codecs=opus',
+    mimeType,
     audioBitsPerSecond: 128000
   });
 
