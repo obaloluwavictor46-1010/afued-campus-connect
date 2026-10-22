@@ -33,8 +33,8 @@ function FacebookProfile(){
         if(postErr) console.log(postErr)
         if(mounted) setPosts(postData||[])
         if(user){
-          const {data:fol} = await supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', userId).maybeSingle()
-          if(mounted) setIsFollowing(!!fol)
+          const {data:fol} = await supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', userId).limit(1)
+          if(mounted) setIsFollowing(!!fol && fol.length > 0)
         }
         const {count:followersCount} = await supabase.from('follows').select('*',{count:'exact', head:true}).eq('following_id', userId)
         if(mounted) setFollowers(followersCount||0)
@@ -66,8 +66,16 @@ function FacebookProfile(){
         setIsFollowing(false)
         setFollowers(f=>Math.max(0,f-1))
       }else{
-        const {error} = await supabase.from('follows').insert({follower_id: me.id, following_id: userId})
-        if(error) throw error
+        const {error} = await supabase.from('follows').upsert({follower_id: me.id, following_id: userId}, {onConflict: 'follower_id,following_id'})
+        if(error){
+          if(error.message.includes('duplicate') || error.code === '23505'){
+            setIsFollowing(true)
+            setFollowers(f=>f+1)
+            setFollowBusy(false)
+            return
+          }
+          throw error
+        }
         setIsFollowing(true)
         setFollowers(f=>f+1)
       }
