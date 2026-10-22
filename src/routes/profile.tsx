@@ -25,8 +25,6 @@ function ProfilePage() {
   const [followingCount, setFollowingCount] = useState(0);
   const [tab, setTab] = useState<"all" | "photos" | "reels">("all");
   const navigate = useNavigate();
-
-  // Any extra fields (bio, location, school, cover_url) wey fit no dey for type yet
   const p: any = profile;
 
   useEffect(() => {
@@ -40,7 +38,6 @@ function ProfilePage() {
         (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
         setCounts(m);
       }
-      // Followers / Following - from follows table
       const { count: f1 } = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", user.id);
       const { count: f2 } = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", user.id);
       setFollowersCount(f1 ?? 0);
@@ -70,7 +67,6 @@ function ProfilePage() {
   return (
     <div className="space-y-4 p-4">
       <div className="overflow-hidden rounded-2xl border bg-card shadow-card">
-        {/* COVER - like James own */}
         <div className="relative h-32 sm:h-40 bg-gradient-hero overflow-hidden">
           {p?.cover_url && <img src={p.cover_url} className="h-full w-full object-cover" alt="cover" />}
           <button onClick={() => setEditing(true)} className="absolute bottom-2 right-2 flex items-center gap-1 rounded-full bg-black/60 px-3 py-1.5 text-xs font-semibold text-white">
@@ -86,25 +82,17 @@ function ProfilePage() {
               <button onClick={logout} className="rounded-full border p-2 text-destructive"><LogOut className="h-4 w-4" /></button>
             </div>
           </div>
-
           <h2 className="mt-3 font-display text-2xl font-extrabold">{profile?.full_name || "Student"}</h2>
           {profile?.faculty && <span className="mt-1 inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold">{profile.faculty}</span>}
-
-          {/* BIO */}
           {p?.bio && <p className="mt-2 text-sm text-foreground">{p.bio}</p>}
-
-          {/* FOLLOWERS • FOLLOWING • POSTS - like James */}
           <p className="mt-3 text-sm">
             <b>{followersCount}</b> <span className="text-muted-foreground">followers</span> • <b>{followingCount}</b> <span className="text-muted-foreground">following</span> • <b>{posts.length}</b> <span className="text-muted-foreground">posts</span>
           </p>
-
-          {/* DETAILS - like James */}
           <div className="mt-4 rounded-2xl border bg-muted/40 p-4 space-y-2 text-sm">
             <p className="font-bold">Details</p>
             <p className="flex items-center gap-2 text-muted-foreground"><MapPin className="h-4 w-4" /> Lives in {p?.location || "Akure"}</p>
             <p className="flex items-center gap-2 text-muted-foreground"><GraduationCap className="h-4 w-4" /> Studied at {p?.school || "AFUED"}</p>
           </div>
-
           {profile?.is_admin && (
             <Link to="/afued-oga-only-2024-x9" className="mt-4 flex w-full items-center justify-center gap-2 rounded-full bg-black py-3 text-sm font-bold text-white">
               <Shield className="h-4 w-4" /> Admin Panel — Oga Only 🔐
@@ -112,8 +100,6 @@ function ProfilePage() {
           )}
         </div>
       </div>
-
-      {/* TABS - like James: All | Photos | Reels */}
       <div className="flex gap-2 px-1">
         {(["all", "photos", "reels"] as const).map((t) => (
           <button key={t} onClick={() => setTab(t)} className={`rounded-full px-4 py-2 text-sm font-semibold capitalize ${tab === t ? "bg-black text-white" : "border bg-card"}`}>
@@ -121,7 +107,6 @@ function ProfilePage() {
           </button>
         ))}
       </div>
-
       <h3 className="px-1 font-display text-lg font-bold">My posts</h3>
       {filteredPosts.length === 0 && <p className="py-6 text-center text-muted-foreground">No posts in this tab yet.</p>}
       {filteredPosts.map((p) => <PostCard key={p.id} post={p} author={profile ?? undefined} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />)}
@@ -174,4 +159,4 @@ function EditProfile({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-            }
+        }
