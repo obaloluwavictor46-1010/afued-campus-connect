@@ -63,22 +63,13 @@ function FacebookProfile(){
       if(isFollowing){
         const {error} = await supabase.from('follows').delete().eq('follower_id', me.id).eq('following_id', userId)
         if(error) throw error
-        setIsFollowing(false)
-        setFollowers(f=>Math.max(0,f-1))
       }else{
         const {error} = await supabase.from('follows').upsert({follower_id: me.id, following_id: userId}, {onConflict: 'follower_id,following_id'})
-        if(error){
-          if(error.message.includes('duplicate') || error.code === '23505'){
-            setIsFollowing(true)
-            setFollowers(f=>f+1)
-            setFollowBusy(false)
-            return
-          }
-          throw error
-        }
-        setIsFollowing(true)
-        setFollowers(f=>f+1)
+        if(error) throw error
       }
+      const {count: realCount} = await supabase.from('follows').select('*',{count:'exact', head:true}).eq('following_id', userId)
+      setFollowers(realCount||0)
+      setIsFollowing(!isFollowing)
     }catch(e:any){
       console.log("Follow error", e)
       alert("Follow failed: " + (e.message || "Check Supabase RLS policy for follows table"))
@@ -208,4 +199,4 @@ function FacebookProfile(){
       </div>
     </div>
   )
-          }
+      }
