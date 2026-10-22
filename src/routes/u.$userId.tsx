@@ -26,31 +26,25 @@ function FacebookProfile(){
         setLoading(true)
         const {data:{user}} = await supabase.auth.getUser()
         if(mounted && user) setMe(user)
-        
         const {data:prof, error:profErr} = await supabase.from('profiles').select('*').eq('id', userId).maybeSingle()
         if(profErr) console.log("Profile error", profErr)
         if(mounted) setProfile(prof)
-
         const {data:postData, error:postErr} = await supabase.from('posts').select('*').eq('user_id', userId).order('created_at',{ascending:false}).limit(20)
         if(postErr) console.log(postErr)
         if(mounted) setPosts(postData||[])
-
         if(user){
           const {data:fol} = await supabase.from('follows').select('id').eq('follower_id', user.id).eq('following_id', userId).maybeSingle()
           if(mounted) setIsFollowing(!!fol)
         }
-
         const {count:followersCount} = await supabase.from('follows').select('*',{count:'exact', head:true}).eq('following_id', userId)
         if(mounted) setFollowers(followersCount||0)
-
         const {count:followingsCount} = await supabase.from('follows').select('*',{count:'exact', head:true}).eq('follower_id', userId)
         if(mounted) setFollowingCount(followingsCount||0)
-
-      }catch(e){ 
-        console.log("Load error", e) 
+      }catch(e){
+        console.log("Load error", e)
       }
-      finally{ 
-        if(mounted) setLoading(false) 
+      finally{
+        if(mounted) setLoading(false)
       }
     }
     run()
@@ -58,9 +52,9 @@ function FacebookProfile(){
   },[userId])
 
   async function toggleFollow(){
-    if(!me?.id) { 
+    if(!me?.id){
       alert("Please login to follow")
-      return 
+      return
     }
     if(me.id===userId) return
     if(followBusy) return
@@ -77,7 +71,7 @@ function FacebookProfile(){
         setIsFollowing(true)
         setFollowers(f=>f+1)
       }
-    }catch(e:any){ 
+    }catch(e:any){
       console.log("Follow error", e)
       alert("Follow failed: " + (e.message || "Check Supabase RLS policy for follows table"))
     } finally {
@@ -106,11 +100,9 @@ function FacebookProfile(){
   const isMe = me?.id === profile.id
   const avatar = profile.avatar_url || `https://ui-avatars.com/api/?name=${encodeURIComponent(profile.full_name||'User')}&background=0866ff&color=fff`
   const coverBg = profile.cover_url ? `url(${profile.cover_url}) center/cover` : 'linear-gradient(90deg,#60a5fa,#3b82f6)'
-
   const bioText = profile.bio || `AFUED Student • ${profile.department||profile.faculty||'Student'} • Helping students connect`
   const displayBio = showFullBio ? bioText : bioText.slice(0, 100)
 
-  // FIX: Helper to get post media - supports both media_url and image_url / video_url
   const getMedia = (p:any) => {
     if(p.media_url) return { url: p.media_url, isVideo: p.media_type?.includes('video') || p.media_url.includes('.mp4') || p.media_url.includes('.mov') }
     if(p.image_url) return { url: p.image_url, isVideo: false }
@@ -118,7 +110,6 @@ function FacebookProfile(){
     return { url: null, isVideo: false }
   }
 
-  // FIX: Filter posts for tabs
   const filteredPosts = posts.filter(p => {
     if(tab === 'All') return true
     if(tab === 'Photos') return getMedia(p).url && !getMedia(p).isVideo
@@ -135,22 +126,18 @@ function FacebookProfile(){
         <span style={{fontSize:18, cursor:'pointer'}}>🔍</span>
         <span style={{fontSize:18, cursor:'pointer'}}>•••</span>
       </div>
-
       <div style={{background:'white'}}>
         <div style={{height:180, background: coverBg, position:'relative'}}>
           <img src={avatar} alt="avatar" style={{width:140, height:140, borderRadius:'50%', border:'4px solid white', position:'absolute', bottom:-40, left:16, objectFit:'cover', background:'white'}}/>
         </div>
-        
         <div style={{padding:'50px 16px 12px'}}>
           <div style={{display:'flex', alignItems:'center', gap:6}}>
             <h1 style={{fontSize:21, fontWeight:'800', margin:0}}>{profile.full_name}</h1>
             <span style={{background:'#1877f2', color:'white', borderRadius:'50%', width:16, height:16, display:'inline-flex', alignItems:'center', justifyContent:'center', fontSize:10}}>✓</span>
           </div>
-          
           <div style={{fontSize:13, marginTop:4, color:'#050505'}}>
             <b>{followers.toLocaleString()}</b> followers • <b>{followingCount}</b> following • <b>{posts.length}</b> posts
           </div>
-          
           <div style={{fontSize:14, marginTop:8, lineHeight:'18px'}}>
             {displayBio}
             {bioText.length > 100 && (
@@ -159,12 +146,10 @@ function FacebookProfile(){
               </span>
             )}
           </div>
-          
           <div style={{fontSize:13, marginTop:8, color:'#65676b'}}>
             <div>🎓 Public figure • 📍 {profile.location||'Akure'}</div>
             {profile.followed_by && <div style={{marginTop:4}}>Followed by {profile.followed_by}</div>}
           </div>
-
           <div style={{display:'flex', gap:8, marginTop:14}}>
             {!isMe ? (
               <>
@@ -177,13 +162,11 @@ function FacebookProfile(){
               <Link to="/profile" style={{flex:1, background:'#e4e6eb', color:'black', padding:'10px', borderRadius:6, textAlign:'center', textDecoration:'none', fontWeight:'600', fontSize:14}}>✏️ Edit Profile</Link>
             )}
           </div>
-
           <div style={{display:'flex', gap:22, marginTop:18, borderTop:'1px solid #e4e6eb', borderBottom:'1px solid #e4e6eb', overflowX:'auto'}}>
             {['All','Photos','Reels','Mentions'].map(t=>(
               <button key={t} onClick={()=>setTab(t)} style={{padding:'12px 2px', border:'none', background:'none', borderBottom: tab===t ? '3px solid #1877f2' : '3px solid transparent', color: tab===t ? '#1877f2' : '#65676b', fontWeight: tab===t ? '700' : '400', fontSize:14, cursor:'pointer', whiteSpace:'nowrap'}}>{t}</button>
             ))}
           </div>
-
           <div style={{marginTop:12, display:'flex', gap:8}}>
             <div style={{flex:1, background:'#f0f2f5', padding:'10px', borderRadius:8, fontSize:13}}>
               <b>Details</b>
@@ -193,7 +176,6 @@ function FacebookProfile(){
           </div>
         </div>
       </div>
-
       <div>
         <div style={{background:'white', padding:'10px 16px', fontWeight:'700', fontSize:15, marginTop:8, borderBottom:'1px solid #e4e6eb'}}>Posts</div>
         {filteredPosts.map(p=>{
@@ -218,4 +200,4 @@ function FacebookProfile(){
       </div>
     </div>
   )
-  }
+          }
