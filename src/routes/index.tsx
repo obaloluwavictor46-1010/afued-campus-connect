@@ -189,7 +189,6 @@ function FeedInner() {
         )}
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
-
       {editingPost && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="w-full max-w-md rounded-2xl bg-white p-5 shadow-2xl">
@@ -241,10 +240,16 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     setEditorUrl(URL.createObjectURL(img));
   }
 
-  function onEditorSend(editedDataUrl: string, captionFromEditor: string) {
+  // FIXED: Video edited file no go lost again - e go keep burned video
+  function onEditorSend(editedDataUrl: string, captionFromEditor: string, editedFile?: File | null) {
     if (captionFromEditor) setContent(prev => prev ? prev + " " + captionFromEditor : captionFromEditor);
     if (editorFile?.type?.startsWith('video/')) {
-      toast.success("Caption added! Press Post now 🎬");
+      if (editedFile) {
+        setEditedFiles([editedFile]);
+        toast.success("Video Edited! Text dey inside video now 🎬 Press Post");
+      } else {
+        toast.success("Caption added! Press Post now 🎬");
+      }
       setEditorUrl(null); setEditorFile(null);
       return;
     }
@@ -383,7 +388,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   );
 }
 
-// === FEED EDITOR V5 - MODERN WHATSAPP PREVIEW - NO MUSIC, NO STICKER ===
+// === FEED EDITOR V6 - MODERN WHATSAPP - NO MUSIC, NO STICKER - VIDEO TEXT BURNED INSIDE, NOT CAPTION ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image();
   image.crossOrigin = "anonymous";
@@ -423,6 +428,7 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const [cropHandle, setCropHandle] = useState<string | null>(null);
   const cropStart = useRef<any>(null);
   const [cropRotate, setCropRotate] = useState(0);
+  const [isBurning, setIsBurning] = useState(false);
 
   useEffect(()=>{
     if(isVideo && videoRef.current){
@@ -606,12 +612,76 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     setCropBox(prev => ({ x: prev.x, y: prev.y, w: prev.h, h: prev.w }));
   }
 
+  // === VIDEO BURN - Text / Pen / Emoji go inside video, NOT caption ===
+  async function burnVideoWithOverlays(): Promise<File | null> {
+    return new Promise((resolve) => {
+      const video = document.createElement('video');
+      video.src = currentImage;
+      video.muted = true;
+      video.playsInline = true;
+      video.onloadedmetadata = async () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = video.videoWidth || 720;
+        canvas.height = video.videoHeight || 1280;
+        const ctx = canvas.getContext('2d')!;
+        const dispVideo = videoRef.current;
+        const rect = dispVideo ? dispVideo.getBoundingClientRect() : { width: canvas.width, height: canvas.height };
+        const scaleX = canvas.width / rect.width;
+        const scaleY = canvas.height / rect.height;
+        // @ts-ignore
+        const stream = canvas.captureStream(30);
+        let rec: any = null;
+        try { rec = new MediaRecorder(stream, { mimeType: 'video/webm' }); } catch { rec = new MediaRecorder(stream); }
+        const chunks: any[] = [];
+        rec.ondataavailable = (e:any) => { if (e.data.size > 0) chunks.push(e.data); };
+        rec.onstop = () => {
+          const blob = new Blob(chunks, { type: 'video/webm' });
+          const file = new File([blob], `edited-video-${Date.now()}.webm`, { type: 'video/webm' });
+          resolve(file);
+        };
+        let raf = 0;
+        const drawFrame = () => {
+          if (video.paused || video.ended) return;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          drawLines.forEach((line: any) => {
+            ctx.strokeStyle = line.color; ctx.lineWidth = line.size * 2 * scaleX; ctx.lineCap = 'round'; ctx.beginPath();
+            line.points.forEach((p: any, i: number) => { const X = p.x * scaleX, Y = p.y * scaleY; if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y); });
+            ctx.stroke();
+          });
+          texts.forEach((t: any) => {
+            ctx.font = `bold ${42 * scaleX}px Arial`;
+            ctx.fillStyle = t.color; ctx.strokeStyle = 'black'; ctx.lineWidth = 3;
+            ctx.strokeText(t.text, t.x * scaleX, t.y * scaleY);
+            ctx.fillText(t.text, t.x * scaleX, t.y * scaleY);
+          });
+          emojis.forEach((e: any) => { ctx.font = `${80 * scaleX}px Arial`; ctx.fillText(e.emoji, e.x * scaleX, e.y * scaleY); });
+          raf = requestAnimationFrame(drawFrame);
+        };
+        video.onplay = () => { rec.start(); drawFrame(); };
+        video.onended = () => { setTimeout(() => { try { rec.stop(); } catch {} }, 200); };
+        video.currentTime = 0;
+        video.play().catch(() => resolve(null));
+        setTimeout(() => { if (rec.state !== 'inactive') { try { rec.stop(); } catch {} } }, ((video.duration || 5) * 1000) + 800);
+      };
+      video.onerror = () => resolve(null);
+    });
+  }
+
   async function handleSend(){
     if(isVideo){
-      const textPart = texts.map((t:any)=>t.text).join(' ');
-      const emojiPart = emojis.map((e:any)=>e.emoji).join(' ');
-      const fullCaption = [caption, textPart, emojiPart].filter(Boolean).join(' ');
-      onSend(imageUrl, fullCaption);
+      if(texts.length===0 && emojis.length===0 && drawLines.length===0){
+        onSend(imageUrl, caption);
+        return;
+      }
+      setIsBurning(true);
+      const burnedFile = await burnVideoWithOverlays();
+      setIsBurning(false);
+      if(burnedFile){
+        // caption na ONLY caption box, screen text NO go join caption
+        onSend(URL.createObjectURL(burnedFile), caption, burnedFile);
+      } else {
+        onSend(imageUrl, caption);
+      }
       return;
     }
     const canvas = canvasRef.current;
@@ -755,8 +825,9 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
           <input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Add a caption..." style={{flex:1, background:'transparent', border:'none', color:'white', outline:'none', fontSize:15}} />
           <span style={{fontSize:16, color:'#aaa'}}>@</span>
         </div>
-        <button onClick={handleSend} style={{width:52, height:52, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:22, flexShrink:0}}>➤</button>
+        <button onClick={handleSend} disabled={isBurning} style={{width:52, height:52, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:22, flexShrink:0, opacity: isBurning ? 0.6 : 1}}>{isBurning ? '⏳' : '➤'}</button>
       </div>
+      {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-}
+       }
