@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Loader2, LogOut, Mail, Phone, Pencil, Shield, MapPin, GraduationCap, Share2, Camera } from "lucide-react";
+import { Loader2, LogOut, Mail, Phone, Pencil, Shield, MapPin, GraduationCap, Share2, Camera, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
@@ -23,9 +23,35 @@ function ProfilePage() {
   const [openPost, setOpenPost] = useState<string | null>(null);
   const [followersCount, setFollowersCount] = useState(0);
   const [followingCount, setFollowingCount] = useState(0);
-  const [tab, setTab] = useState<"all" | "photos" | "reels">("all");
+  const [tab, setTab] = useState<"all" | "photos" | "reels" | "reposts">("all");
   const navigate = useNavigate();
   const p: any = profile;
+
+  // === ADDED: REPOSTS LIKE TIKTOK ===
+  const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
+  const [repostCount, setRepostCount] = useState(0);
+
+  const loadReposts = async (uid: string) => {
+    const { data: rows, error } = await supabase.from("reposts").select("post_id, created_at").eq("user_id", uid).order("created_at", { ascending: false });
+    if (error || !rows || rows.length === 0) {
+      setRepostedPosts([]);
+      setRepostCount(0);
+      return;
+    }
+    const ids = rows.map((r: any) => r.post_id);
+    const { data: rePosts } = await supabase.from("posts").select("*").in("id", ids).order("created_at", { ascending: false });
+    // Keep repost order - latest repost first
+    const ordered = ids.map((id: string) => (rePosts || []).find((pp: any) => pp.id === id)).filter(Boolean) as Post[];
+    setRepostedPosts(ordered);
+    setRepostCount(rows.length);
+    // Load comment counts for reposted posts too
+    if (ordered.length) {
+      const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", ordered.map((pp: any) => pp.id));
+      const m: Record<string, number> = {};
+      (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
+      setCounts((prev) => ({ ...prev, ...m }));
+    }
+  };
 
   useEffect(() => {
     if (!user) return;
@@ -42,7 +68,14 @@ function ProfilePage() {
       const { count: f2 } = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", user.id);
       setFollowersCount(f1 ?? 0);
       setFollowingCount(f2 ?? 0);
+      // === ADDED: Load my reposts ===
+      await loadReposts(user.id);
     })();
+    // === ADDED: Live update when I repost / unrepost from anywhere ===
+    const ch = supabase.channel(`my-reposts-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `user_id=eq.${user.id}` }, () => loadReposts(user.id))
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
   }, [user]);
 
   const logout = async () => { await supabase.auth.signOut(); navigate({ to: "/auth", replace: true }); };
@@ -57,8 +90,12 @@ function ProfilePage() {
     }
   };
 
-  const filteredPosts = posts.filter((post: any) => {
+  // === ADDED: If tab na reposts, show repostedPosts, else show my posts ===
+  const listToShow = tab === "reposts" ? repostedPosts : posts;
+
+  const filteredPosts = listToShow.filter((post: any) => {
     if (tab === "all") return true;
+    if (tab === "reposts") return true;
     if (tab === "photos") return post.media_url && !post.media_url.includes(".mp4") && !post.media_type?.includes("video");
     if (tab === "reels") return post.media_type?.includes("video") || post.media_url?.includes(".mp4");
     return true;
@@ -92,7 +129,7 @@ function ProfilePage() {
           {profile?.faculty && <span className="mt-1 inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold">{profile.faculty}</span>}
           {p?.bio && <p className="mt-2 text-sm text-foreground">{p.bio}</p>}
           <p className="mt-3 text-sm">
-            <b>{followersCount}</b> <span className="text-muted-foreground">followers</span> • <b>{followingCount}</b> <span className="text-muted-foreground">following</span> • <b>{posts.length}</b> <span className="text-muted-foreground">posts</span>
+            <b>{followersCount}</b> <span className="text-muted-foreground">followers</span> • <b>{followingCount}</b> <span className="text-muted-foreground">following</span> • <b>{posts.length}</b> <span className="text-muted-foreground">posts</span> • <b>{repostCount}</b> <span className="text-muted-foreground">reposts</span>
           </p>
           <div className="mt-4 rounded-2xl border bg-muted/40 p-4 space-y-2 text-sm">
             <p className="font-bold">Details</p>
@@ -106,16 +143,26 @@ function ProfilePage() {
           )}
         </div>
       </div>
-      <div className="flex gap-2 px-1">
-        {(["all", "photos", "reels"] as const).map((t) => (
-          <button key={t} onClick={() => setTab(t)} className={`rounded-full px-4 py-2 text-sm font-semibold capitalize ${tab === t ? "bg-black text-white" : "border bg-card"}`}>
-            {t === "all" ? "All" : t}
+      <div className="flex gap-2 px-1 overflow-x-auto no-scrollbar">
+        {(["all", "photos", "reels", "reposts"] as const).map((t) => (
+          <button key={t} onClick={() => setTab(t)} className={`shrink-0 rounded-full px-4 py-2 text-sm font-semibold capitalize ${tab === t ? "bg-black text-white" : "border bg-card"}`}>
+            {t === "all" ? "All" : t} {t === "reposts" ? `(${repostCount})` : ""}
           </button>
         ))}
       </div>
-      <h3 className="px-1 font-display text-lg font-bold">My posts</h3>
-      {filteredPosts.length === 0 && <p className="py-6 text-center text-muted-foreground">No posts in this tab yet.</p>}
-      {filteredPosts.map((p) => <PostCard key={p.id} post={p} author={profile ?? undefined} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />)}
+      <h3 className="px-1 font-display text-lg font-bold">{tab === "reposts" ? `My reposts • ${repostCount}` : "My posts"}</h3>
+      {filteredPosts.length === 0 && <p className="py-6 text-center text-muted-foreground">{tab === "reposts" ? "You never repost anything yet. Go Feed, press 🔁 for any post you like!" : "No posts in this tab yet."}</p>}
+      {filteredPosts.map((p) => (
+        <div key={p.id}>
+          {/* === ADDED: Repost label like TikTok === */}
+          {tab === "reposts" && (
+            <div className="mb-1 flex items-center gap-1.5 px-1 text-xs font-bold text-green-700">
+              <Repeat2 className="h-3.5 w-3.5" /> You reposted this
+            </div>
+          )}
+          <PostCard key={p.id} post={p} author={profile ?? undefined} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
+        </div>
+      ))}
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
       {editing && <EditProfile onClose={() => { setEditing(false); refreshProfile(); }} />}
     </div>
@@ -165,4 +212,4 @@ function EditProfile({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-    }
+         }
