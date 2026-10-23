@@ -94,7 +94,6 @@ function AuthPage() {
       }
 
       else if (mode === "login") {
-        // FIXED: Remove unused 'data' - na this dey cause Vercel build fail
         const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: f.password });
         if (error) {
           if (error.message.includes("Invalid login credentials")) throw new Error("Wrong email or password. If you never verify your Gmail, go check Gmail for verification link.");
@@ -254,7 +253,3 @@ function AuthPage() {
     </div>
   );
 }
-export function shortFaculty(faculty: string) {
-  if (!faculty) return "";
-  return faculty.slice(0, 4).toUpperCase();
-                              }
