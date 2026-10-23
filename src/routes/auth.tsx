@@ -32,17 +32,22 @@ function AuthPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  useEffect(() => {
-    if (user && mode !== "reset") navigate({ to: "/" });
-  }, [user, navigate, mode]);
+  // CHECK RECOVERY FIRST - before we carry user go home
+  const isRecoveryLink =
+    typeof window !== "undefined" &&
+    (window.location.hash.includes("type=recovery") ||
+      window.location.hash.includes("access_token") ||
+      window.location.search.includes("code="));
 
   useEffect(() => {
-    const hash = window.location.hash;
-    if (hash.includes("type=recovery") || hash.includes("access_token")) {
+    // If na recovery link, NO carry am go home, make e stay for /auth to set new password
+    if (isRecoveryLink) {
       setMode("reset");
       setNotice({ type: "info", text: "Link don open. Type your new password now." });
+      return;
     }
-  }, []);
+    if (user && mode !== "reset") navigate({ to: "/" });
+  }, [user, navigate, mode, isRecoveryLink]);
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
@@ -254,4 +259,4 @@ function AuthPage() {
       </div>
     </div>
   );
-        }
+    }
