@@ -62,7 +62,7 @@ function Page() {
       setShowCodeDialog(false);
       setCodeInput("");
       setOpen(true);
-    } else { toast.error("Wrong code! Enter 1010"); }
+    } else { toast.error("Wrong code! Try again"); }
   };
   return (
     <div className="space-y-4 p-4">
@@ -104,7 +104,7 @@ function Page() {
           <DialogHeader><DialogTitle className="flex items-center gap-2"><Lock className="h-5 w-5" /> Enter Admin Code</DialogTitle></DialogHeader>
           <div className="space-y-3">
             <p className="text-sm text-muted-foreground">Only admins with code can post announcements.</p>
-            <input type="password" placeholder="Enter code (1010)" className="w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && verifyCode()} />
+            <input type="password" placeholder="Enter code" className="w-full rounded-2xl border bg-background px-4 py-3 text-sm outline-none focus:ring-2 focus:ring-ring/40" value={codeInput} onChange={(e) => setCodeInput(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && verifyCode()} />
             <button onClick={verifyCode} className="flex w-full justify-center rounded-2xl bg-primary py-3 font-semibold text-primary-foreground">Verify Code</button>
           </div>
         </DialogContent>
@@ -175,7 +175,6 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
     } catch (err: any) { console.log(err); toast.error(err?.message || "Post failed - check internet / file size"); } finally { setBusy(false); setPct(null); }
   };
 
-  // FIX 1: When editor open, HIDE Dialog completely - Dialog overlay dey block editor taps
   if (editorUrl) {
     return <WhatsAppEditor imageUrl={editorUrl} isVideo={editorFile?.type?.startsWith('video/')} onCancel={() => { setEditorUrl(null); setEditorFile(null); }} onSend={onEditorSend} />;
   }
@@ -262,7 +261,6 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     }
   },[tool, isVideo]);
 
-  // FIX 2: Redraw picture EVERY time tool changes (after Crop, canvas remounts empty)
   useEffect(()=>{
     if(isVideo) return;
     setImgReady(false);
@@ -501,7 +499,6 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       else { onSend(imageUrl, caption); }
       return;
     }
-    // FIX 3: If canvas never load, send original picture, no crash
     const canvas = canvasRef.current;
     if(!canvas || !canvas.width){ onSend(currentImage, caption); return; }
     try{
@@ -648,4 +645,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {!imgReady && !isVideo && <p style={{textAlign:'center', color:'#aaa', fontSize:11, background:'#000', padding:'4px'}}>Loading picture... wait small</p>}
     </div>
   );
-      }
+    }
