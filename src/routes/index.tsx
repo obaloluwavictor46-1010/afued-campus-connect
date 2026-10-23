@@ -351,7 +351,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         {picker.grid(busy)}
         {showEditorBtn && editedFiles.length===0 && (
           <button onClick={openEditorForFirstImage} className="mt-2 w-full rounded-full bg-[#00a884] py-2.5 text-sm font-bold text-white shadow">
-            🎨 Edit Picture / Video Like WhatsApp - Draw, Text, Emoji, Crop
+            🎨 Edit Picture / Video Like WhatsApp - Draw, Text, Crop
           </button>
         )}
         {editedFiles.length>0 && (
@@ -383,7 +383,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   );
 }
 
-// === FEED EDITOR V3 - GALAXY CROP + DRAG TEXT/EMOJI + VIDEO PAUSE - NO Cropper, NO prompt(), NO 4-corner ===
+// === FEED EDITOR V5 - MODERN WHATSAPP PREVIEW - NO MUSIC, NO STICKER ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image();
   image.crossOrigin = "anonymous";
@@ -400,33 +400,33 @@ async function getCroppedImg(imageSrc: string, pixelCrop: any) {
 function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const canvasRef = useRef<any>(null);
   const videoRef = useRef<any>(null);
-  const [tool, setTool] = useState<'pen'|'emoji'|'crop'|'text'>('pen');
-  const [color, setColor] = useState('#ff0000');
+  const [tool, setTool] = useState<'pen'|'eraser'|'crop'|'text'>('pen');
+  const [color, setColor] = useState('#ffffff');
   const [brushSize, setBrushSize] = useState(5);
   const [isDrawing, setIsDrawing] = useState(false);
   const [caption, setCaption] = useState('');
-  const COLORS = ['#ff0000','#ff9500','#ffeb00','#00e676','#00b0ff','#ff4081','#ffffff','#000000','#9c27b0'];
-  const EMOJIS = ['😂','❤️','🔥','😍','👍','😮','🥰','😭','🙏','🎉','💯','😎','🎓','🇳🇬','✨','👑'];
-  const [emojis, setEmojis] = useState<any[]>([]);
+  const COLORS = ['#ffffff','#ff0000','#ff9500','#ffeb00','#00e676','#00b0ff','#ff4081','#000000','#9c27b0'];
   const [texts, setTexts] = useState<any[]>([]);
+  const [emojis, setEmojis] = useState<any[]>([]);
   const [currentImage, setCurrentImage] = useState(imageUrl);
   const [directText, setDirectText] = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
   const [drawLines, setDrawLines] = useState<any[]>([]);
   const [dragItem, setDragItem] = useState<any>(null);
+  const [selectedText, setSelectedText] = useState<number | null>(null);
+  const [editingInline, setEditingInline] = useState<number | null>(null);
+  const [editInlineValue, setEditInlineValue] = useState('');
+  const tapStart = useRef<any>(null);
+  const [filter, setFilter] = useState('none');
+  const FILTERS = [{n:'Original', v:'none'}, {n:'Pop', v:'contrast(1.2) saturate(1.4)'}, {n:'B&W', v:'grayscale(1)'}, {n:'Cool', v:'hue-rotate(180deg) saturate(1.2)'}, {n:'Warm', v:'sepia(0.4) contrast(1.1)'}, {n:'Vivid', v:'saturate(1.8) contrast(1.15)'}];
+  const [cropBox, setCropBox] = useState({ x: 8, y: 8, w: 84, h: 84 });
+  const [cropHandle, setCropHandle] = useState<string | null>(null);
+  const cropStart = useRef<any>(null);
+  const [cropRotate, setCropRotate] = useState(0);
 
-  // STEP 1: GALAXY CROP - drag middle, pinch zoom, frame dey still
-  const [gx, setGx] = useState(0);
-  const [gy, setGy] = useState(0);
-  const [gScale, setGScale] = useState(1);
-  const galaxyDrag = useRef<any>(null);
-  const galaxyPinch = useRef<number | null>(null);
-  const galaxyStartScale = useRef(1);
-
-  // STEP 3: VIDEO PAUSE - when you draw / type, video pause so ink no break
   useEffect(()=>{
     if(isVideo && videoRef.current){
-      if(tool==='pen' || tool==='text' || tool==='emoji') videoRef.current.pause();
+      if(tool==='pen' || tool==='eraser' || tool==='text' || tool==='crop') videoRef.current.pause();
       else videoRef.current.play().catch(()=>{});
     }
   },[tool, isVideo]);
@@ -456,7 +456,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     return {x: cx - rect.left, y: cy - rect.top, clientX: cx, clientY: cy};
   }
 
-  // STEP 2: DRAG TEXT / EMOJI
   function startDragItem(e:any, type:string, index:number){
     e.stopPropagation();
     const p = getPos(e);
@@ -468,24 +467,27 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     const p = getPos(e);
     const dx = p.clientX - dragItem.startX;
     const dy = p.clientY - dragItem.startY;
-    if(dragItem.type==='text'){
-      setTexts(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
-    } else {
-      setEmojis(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
-    }
+    if(dragItem.type==='text') setTexts(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
+    else setEmojis(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
   }
   function endDragItem(){ setDragItem(null); }
 
   function startDraw(e:any){
     if(dragItem) return;
-    if(tool!=='pen') return;
-    setIsDrawing(true);
-    const {x,y} = getPos(e);
-    setDrawLines(prev=>[...prev, {color, size: brushSize, points:[{x,y}]}]);
+    if(tool==='pen'){
+      setIsDrawing(true);
+      const {x,y} = getPos(e);
+      setDrawLines(prev=>[...prev, {color, size: brushSize, points:[{x,y}]}]);
+    } else if(tool==='eraser'){
+      setIsDrawing(true);
+      eraseAt(e);
+    }
   }
   function draw(e:any){
     if(dragItem){ moveDragItem(e); return; }
     if(!isDrawing) return;
+    if(tool==='eraser'){ eraseAt(e); return; }
+    if(tool!=='pen') return;
     const {x,y} = getPos(e);
     setDrawLines(prev=>{
       const copy=[...prev];
@@ -495,72 +497,113 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     });
   }
   function endDraw(){ setIsDrawing(false); endDragItem(); }
+  function eraseAt(e:any){
+    const {x,y} = getPos(e);
+    setDrawLines(prev=>prev.filter((line:any)=> !line.points.some((p:any)=> Math.sqrt((p.x-x)*(p.x-x)+(p.y-y)*(p.y-y)) < 28 )));
+  }
   function undo(){
     if(drawLines.length>0) setDrawLines(prev=>prev.slice(0,-1));
     else if(texts.length>0) setTexts(prev=>prev.slice(0,-1));
     else if(emojis.length>0) setEmojis(prev=>prev.slice(0,-1));
   }
+
   function confirmDirectText(){
     if(!directText.trim()){ setShowTextInput(false); return; }
     setTexts(prev=>[...prev, {text: directText.trim(), x: 80, y: 150, color}]);
     setDirectText(''); setShowTextInput(false); setTool('pen');
   }
-  function addEmoji(emoji:string){
-    setEmojis(prev=>[...prev, {emoji, x: 120, y: 220}]);
+  function onTextTouchStart(e:any, i:number){
+    const cx = e.clientX ?? e.touches?.[0]?.clientX;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY;
+    tapStart.current = { x: cx, y: cy, time: Date.now(), index: i };
+  }
+  function onTextTouchEnd(e:any, i:number){
+    if(!tapStart.current) return;
+    const cx = e.clientX ?? e.touches?.[0]?.clientX ?? tapStart.current.x;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY ?? tapStart.current.y;
+    const dx = Math.abs(cx - tapStart.current.x);
+    const dy = Math.abs(cy - tapStart.current.y);
+    const dt = Date.now() - tapStart.current.time;
+    if(dx < 6 && dy < 6 && dt < 400){
+      e.stopPropagation();
+      setEditingInline(i);
+      setEditInlineValue(texts[i].text);
+      setSelectedText(i);
+    }
+    tapStart.current = null;
+  }
+  function saveInlineEdit(){
+    if(editingInline===null) return;
+    if(editInlineValue.trim()==='') setTexts(prev=>prev.filter((_,idx)=>idx!==editingInline));
+    else setTexts(prev=>prev.map((t,idx)=> idx===editingInline ? {...t, text: editInlineValue} : t));
+    setEditingInline(null); setSelectedText(null);
+  }
+  function deleteInlineText(){
+    if(editingInline===null) return;
+    setTexts(prev=>prev.filter((_,idx)=>idx!==editingInline));
+    setEditingInline(null); setSelectedText(null);
   }
 
-  // STEP 1: GALAXY CROP FUNCTIONS
-  async function applyGalaxyCrop(){
-    const img = new Image();
-    img.crossOrigin='anonymous';
-    img.src = currentImage;
-    await new Promise((res)=>(img.onload=res));
-    const canvas = document.createElement('canvas');
-    canvas.width = img.width;
-    canvas.height = img.height;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = '#000';
-    ctx.fillRect(0,0,img.width,img.height);
-    const drawW = img.width * gScale;
-    const drawH = img.height * gScale;
-    const offsetX = (img.width - drawW)/2 + (gx * 2);
-    const offsetY = (img.height - drawH)/2 + (gy * 2);
-    ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
-    const cropped = canvas.toDataURL('image/jpeg', 0.92);
-    setCurrentImage(cropped);
-    setGx(0); setGy(0); setGScale(1);
-    setTool('pen');
-  }
-  function onGalaxyTouchStart(e:any){
-    if(e.touches?.length===2){
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      galaxyPinch.current = Math.sqrt(dx*dx+dy*dy);
-      galaxyStartScale.current = gScale;
-      return;
-    }
+  function startCropHandle(e:any, handle:string){
+    e.stopPropagation();
+    const container = document.getElementById('crop-container-feed');
+    if(!container) return;
+    const rect = container.getBoundingClientRect();
     const cx = e.clientX ?? e.touches?.[0]?.clientX;
     const cy = e.clientY ?? e.touches?.[0]?.clientY;
-    galaxyDrag.current = {x: cx, y: cy, gx, gy};
+    cropStart.current = { handle, startX: cx, startY: cy, box: {...cropBox}, rect };
+    setCropHandle(handle);
   }
-  function onGalaxyTouchMove(e:any){
-    if(e.touches?.length===2 && galaxyPinch.current){
-      const dx = e.touches[0].clientX - e.touches[1].clientX;
-      const dy = e.touches[0].clientY - e.touches[1].clientY;
-      const dist = Math.sqrt(dx*dx+dy*dy);
-      const newScale = galaxyStartScale.current * (dist / galaxyPinch.current);
-      setGScale(Math.max(1, Math.min(3, newScale)));
-      return;
-    }
-    if(!galaxyDrag.current) return;
+  function startCropMove(e:any){
+    const container = document.getElementById('crop-container-feed');
+    if(!container) return;
+    const rect = container.getBoundingClientRect();
     const cx = e.clientX ?? e.touches?.[0]?.clientX;
     const cy = e.clientY ?? e.touches?.[0]?.clientY;
-    setGx(galaxyDrag.current.gx + (cx - galaxyDrag.current.x));
-    setGy(galaxyDrag.current.gy + (cy - galaxyDrag.current.y));
+    cropStart.current = { handle:'move', startX: cx, startY: cy, box: {...cropBox}, rect };
+    setCropHandle('move');
   }
-  function onGalaxyTouchEnd(){
-    galaxyDrag.current = null;
-    galaxyPinch.current = null;
+  function moveCropHandle(e:any){
+    if(!cropHandle || !cropStart.current) return;
+    const { rect, box, startX, startY, handle } = cropStart.current;
+    const cx = e.clientX ?? e.touches?.[0]?.clientX;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY;
+    const dxPct = ((cx - startX) / rect.width) * 100;
+    const dyPct = ((cy - startY) / rect.height) * 100;
+    let next = {...box};
+    if(handle==='move'){
+      next.x = box.x + dxPct; next.y = box.y + dyPct;
+      if(next.x < 0) next.x = 0; if(next.y < 0) next.y = 0;
+      if(next.x + next.w > 100) next.x = 100 - next.w;
+      if(next.y + next.h > 100) next.y = 100 - next.h;
+    } else {
+      if(handle.includes('l')){ next.x = box.x + dxPct; next.w = box.w - dxPct; }
+      if(handle.includes('r')){ next.w = box.w + dxPct; }
+      if(handle.includes('t')){ next.y = box.y + dyPct; next.h = box.h - dyPct; }
+      if(handle.includes('b')){ next.h = box.h + dyPct; }
+      if(next.w < 20){ if(handle.includes('l')) next.x = box.x + box.w - 20; next.w = 20; }
+      if(next.h < 20){ if(handle.includes('t')) next.y = box.y + box.h - 20; next.h = 20; }
+      if(next.x < 0){ next.w += next.x; next.x = 0; }
+      if(next.y < 0){ next.h += next.y; next.y = 0; }
+      if(next.x + next.w > 100) next.w = 100 - next.x;
+      if(next.y + next.h > 100) next.h = 100 - next.y;
+    }
+    setCropBox(next);
+  }
+  function endCropHandle(){ setCropHandle(null); cropStart.current = null; }
+  async function applyCrop(){
+    if(!isVideo){
+      const img = new Image(); img.crossOrigin='anonymous'; img.src = currentImage;
+      await new Promise((res)=>(img.onload=res));
+      const pixelCrop = { x: (cropBox.x/100)*img.width, y: (cropBox.y/100)*img.height, width: (cropBox.w/100)*img.width, height: (cropBox.h/100)*img.height };
+      const cropped = await getCroppedImg(currentImage, pixelCrop);
+      setCurrentImage(cropped);
+    }
+    setCropBox({x:8,y:8,w:84,h:84}); setCropRotate(0); setTool('pen');
+  }
+  function rotateCrop(){
+    setCropRotate(prev => (prev + 90) % 360);
+    setCropBox(prev => ({ x: prev.x, y: prev.y, w: prev.h, h: prev.w }));
   }
 
   async function handleSend(){
@@ -576,7 +619,9 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     const img = new Image(); img.crossOrigin='anonymous'; img.src=currentImage;
     await new Promise((res)=>(img.onload=res));
     ctx.clearRect(0,0,canvas.width,canvas.height);
+    ctx.filter = filter;
     ctx.drawImage(img,0,0);
+    ctx.filter = 'none';
     const rect = canvas.getBoundingClientRect();
     const scaleX = canvas.width / rect.width;
     const scaleY = canvas.height / rect.height;
@@ -592,77 +637,81 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
 
   return (
     <div style={{position:'fixed', inset:0, background:'black', zIndex:1000, display:'flex', flexDirection:'column'}}>
-      <div style={{display:'flex', justifyContent:'space-between', padding:'12px', background:'#111'}}>
-        <button onClick={onCancel} style={{color:'white', background:'none', border:'none', fontSize:24}}>✕</button>
-        <div style={{display:'flex', gap:18, alignItems:'center'}}>
-          <button onClick={()=>setTool('emoji')} style={{color: tool==='emoji'?'#00e676':'white', background:'none', border:'none', fontSize:22}}>😊</button>
-          {!isVideo && <button onClick={()=>setTool('crop')} style={{color: tool==='crop'?'#00e676':'white', background:'none', border:'none', fontSize:16, fontWeight:'bold'}}>Crop</button>}
-          <button onClick={()=>{ setShowTextInput(true); setTool('text'); }} style={{color: tool==='text'?'#00e676':'white', background:'none', border:'none', fontSize:22, fontWeight:'bold'}}>Aa</button>
-          <button onClick={()=>setTool('pen')} style={{color: tool==='pen'?'#00e676':'white', background:'none', border:'none', fontSize:22}}>✏️</button>
-          <button onClick={undo} style={{color:'white', background:'none', border:'none', fontSize:22, fontWeight:'bold'}}>↩</button>
+      <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px'}}>
+        <button onClick={onCancel} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:22, width:36, height:36, borderRadius:'50%'}}>✕</button>
+        <div style={{display:'flex', gap:10, alignItems:'center'}}>
+          <button onClick={()=>setTool('crop')} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:20, width:38, height:38, borderRadius:'50%'}}>⤢</button>
+          <button onClick={()=>{ setShowTextInput(true); setTool('text'); }} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:17, fontWeight:'bold', width:38, height:38, borderRadius:'50%'}}>Aa</button>
+          <button onClick={()=>setTool('pen')} style={{color: tool==='pen'?'#00e676':'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:20, width:38, height:38, borderRadius:'50%'}}>✎</button>
+          <button onClick={()=>setTool('eraser')} style={{color: tool==='eraser'?'#ff5252':'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:16, width:38, height:38, borderRadius:'50%'}}>🧽</button>
+          <button onClick={undo} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:20, width:38, height:38, borderRadius:'50%'}}>↩</button>
         </div>
       </div>
 
-      {tool==='crop' && !isVideo ? (
-        <div style={{position:'relative', flex:1, background:'#000', display:'flex', flexDirection:'column', overflow:'hidden'}}>
-          <div style={{textAlign:'center', color:'white', fontSize:13, padding:'10px'}}>
-            👆 Drag middle to move picture • Pinch 2 fingers to zoom • Like Samsung Gallery
-          </div>
-          <div
-            onMouseDown={onGalaxyTouchStart}
-            onMouseMove={onGalaxyTouchMove}
-            onMouseUp={onGalaxyTouchEnd}
-            onTouchStart={onGalaxyTouchStart}
-            onTouchMove={onGalaxyTouchMove}
-            onTouchEnd={onGalaxyTouchEnd}
-            style={{flex:1, position:'relative', overflow:'hidden', touchAction:'none', cursor:'grab'}}
-          >
-            <img src={currentImage} draggable={false} style={{position:'absolute', left:'50%', top:'50%', width:'90%', height:'80%', objectFit:'cover', transform:`translate(calc(-50% + ${gx}px), calc(-50% + ${gy}px)) scale(${gScale})`, pointerEvents:'none'}} />
-            <div style={{position:'absolute', left:'5%', top:'10%', width:'90%', height:'80%', border:'2px solid white', pointerEvents:'none', boxSizing:'border-box'}}>
-              <div style={{position:'absolute', left:'33.3%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.5)'}} />
-              <div style={{position:'absolute', left:'66.6%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.5)'}} />
-              <div style={{position:'absolute', top:'33.3%', left:0, right:0, height:1, background:'rgba(255,255,255,0.5)'}} />
-              <div style={{position:'absolute', top:'66.6%', left:0, right:0, height:1, background:'rgba(255,255,255,0.5)'}} />
+      {tool==='crop' ? (
+        <div id="crop-container-feed" onMouseMove={moveCropHandle} onTouchMove={moveCropHandle} onMouseUp={endCropHandle} onTouchEnd={endCropHandle} style={{flex:1, position:'relative', background:'black', display:'flex', flexDirection:'column', overflow:'hidden'}}>
+          <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
+            {isVideo ? (
+              <video ref={videoRef} src={currentImage} playsInline muted loop style={{maxWidth:'100%', maxHeight:'100%', objectFit:'contain', pointerEvents:'none', transform:`rotate(${cropRotate}deg)`, filter}} />
+            ) : (
+              <img src={currentImage} style={{maxWidth:'100%', maxHeight:'100%', objectFit:'contain', pointerEvents:'none', transform:`rotate(${cropRotate}deg)`, filter}} />
+            )}
+            <div onMouseDown={startCropMove} onTouchStart={startCropMove} style={{position:'absolute', left:`${cropBox.x}%`, top:`${cropBox.y}%`, width:`${cropBox.w}%`, height:`${cropBox.h}%`, boxShadow:'0 0 0 9999px rgba(0,0,0,0.72)', boxSizing:'border-box', touchAction:'none', cursor:'move'}}>
+              <div style={{position:'absolute', inset:0, border:'1px solid rgba(255,255,255,0.7)'}}>
+                <div style={{position:'absolute', left:'33.3%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.6)'}} />
+                <div style={{position:'absolute', left:'66.6%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.6)'}} />
+                <div style={{position:'absolute', top:'33.3%', left:0, right:0, height:1, background:'rgba(255,255,255,0.6)'}} />
+                <div style={{position:'absolute', top:'66.6%', left:0, right:0, height:1, background:'rgba(255,255,255,0.6)'}} />
+              </div>
+              <div onMouseDown={(e)=>startCropHandle(e,'tl')} onTouchStart={(e)=>startCropHandle(e,'tl')} style={{position:'absolute', left:-2, top:-2, width:28, height:28, borderLeft:'4px solid white', borderTop:'4px solid white', touchAction:'none', zIndex:10}} />
+              <div onMouseDown={(e)=>startCropHandle(e,'tr')} onTouchStart={(e)=>startCropHandle(e,'tr')} style={{position:'absolute', right:-2, top:-2, width:28, height:28, borderRight:'4px solid white', borderTop:'4px solid white', touchAction:'none', zIndex:10}} />
+              <div onMouseDown={(e)=>startCropHandle(e,'bl')} onTouchStart={(e)=>startCropHandle(e,'bl')} style={{position:'absolute', left:-2, bottom:-2, width:28, height:28, borderLeft:'4px solid white', borderBottom:'4px solid white', touchAction:'none', zIndex:10}} />
+              <div onMouseDown={(e)=>startCropHandle(e,'br')} onTouchStart={(e)=>startCropHandle(e,'br')} style={{position:'absolute', right:-2, bottom:-2, width:28, height:28, borderRight:'4px solid white', borderBottom:'4px solid white', touchAction:'none', zIndex:10}} />
             </div>
           </div>
-          <div style={{background:'#111', padding:'12px'}}>
-            <div style={{display:'flex', alignItems:'center', gap:10, color:'white', marginBottom:12}}>
-              <span style={{fontSize:12}}>Zoom Out</span>
-              <input type="range" min={1} max={3} step={0.1} value={gScale} onChange={e=>setGScale(Number(e.target.value))} style={{flex:1}} />
-              <span style={{fontSize:12}}>Zoom In</span>
-            </div>
-            <div style={{display:'flex', gap:10}}>
-              <button onClick={()=>{ setGx(0); setGy(0); setGScale(1); setTool('pen'); }} style={{flex:1, background:'#333', color:'white', border:'none', padding:'12px', borderRadius:20}}>Cancel</button>
-              <button onClick={()=>{ setGx(0); setGy(0); setGScale(1); }} style={{background:'#444', color:'white', border:'none', padding:'12px 16px', borderRadius:20}}>Reset</button>
-              <button onClick={applyGalaxyCrop} style={{flex:1, background:'#00a884', color:'white', border:'none', padding:'12px', borderRadius:20, fontWeight:'bold'}}>Done Crop ✂️</button>
-            </div>
+          <div style={{background:'#000', padding:'14px 24px 18px', display:'flex', justifyContent:'space-between', alignItems:'center'}}>
+            <button onClick={()=>{ setCropBox({x:8,y:8,w:84,h:84}); setCropRotate(0); setTool('pen'); }} style={{background:'none', border:'none', color:'#00e676', fontSize:16, fontWeight:'600'}}>Cancel</button>
+            <button onClick={rotateCrop} style={{background:'none', border:'none', color:'white', fontSize:24}}>⟳</button>
+            <button onClick={applyCrop} style={{background:'none', border:'none', color:'#00e676', fontSize:16, fontWeight:'600'}}>Done</button>
           </div>
         </div>
       ) : (
       <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', background:'#000'}} onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}>
         {isVideo ? (
-          <video ref={videoRef} src={currentImage} controls playsInline autoPlay loop muted style={{maxWidth:'100%', maxHeight:'100%'}} />
+          <video ref={videoRef} src={currentImage} controls playsInline autoPlay loop muted style={{maxWidth:'100%', maxHeight:'100%', filter}} />
         ) : (
-          <canvas ref={canvasRef} style={{maxWidth:'100%', maxHeight:'100%', touchAction:'none'}} />
+          <canvas ref={canvasRef} style={{maxWidth:'100%', maxHeight:'100%', touchAction:'none', filter}} />
         )}
         <svg style={{position:'absolute', inset:0, width:'100%', height:'100%', pointerEvents:'none'}}>
           {drawLines.map((line:any, li:number)=>(
             <polyline key={li} points={line.points.map((p:any)=>`${p.x},${p.y}`).join(' ')} fill="none" stroke={line.color} strokeWidth={line.size} strokeLinecap="round" strokeLinejoin="round" />
           ))}
         </svg>
-        {texts.map((t:any,i:number)=>(
-          <div key={i} onMouseDown={(e)=>startDragItem(e,'text',i)} onTouchStart={(e)=>startDragItem(e,'text',i)} style={{position:'absolute', left:t.x, top:t.y, color:t.color, fontSize:28, fontWeight:'bold', textShadow:'0 2px 4px black', cursor:'move', touchAction:'none', padding:'6px 10px', border:'1px dashed rgba(255,255,255,0.5)', borderRadius:8}}>✋ {t.text}</div>
-        ))}
+        {texts.map((t:any,i:number)=>{
+          if(editingInline===i){
+            return (
+              <div key={i} style={{position:'absolute', left:t.x, top:t.y, zIndex:50, display:'flex', flexDirection:'column', gap:6}} onMouseDown={e=>e.stopPropagation()} onTouchStart={e=>e.stopPropagation()}>
+                <input autoFocus value={editInlineValue} onChange={e=>setEditInlineValue(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') saveInlineEdit(); if(e.key==='Escape'){ setEditingInline(null); setSelectedText(null); } }} style={{fontSize:28, fontWeight:'bold', color:t.color, background:'rgba(0,0,0,0.85)', border:'2px solid #00e676', borderRadius:8, padding:'6px 10px', width:'220px', outline:'none'}} />
+                <div style={{display:'flex', gap:6}}>
+                  <button onClick={deleteInlineText} style={{flex:1, background:'#ff5252', color:'white', border:'none', padding:'8px', borderRadius:20, fontWeight:'bold', fontSize:12}}>🗑 Delete</button>
+                  <button onClick={saveInlineEdit} style={{flex:1, background:'#00a884', color:'white', border:'none', padding:'8px', borderRadius:20, fontWeight:'bold', fontSize:12}}>Done ✓</button>
+                </div>
+              </div>
+            );
+          }
+          return (
+            <div key={i} onMouseDown={(e)=>{ onTextTouchStart(e,i); startDragItem(e,'text',i); }} onTouchStart={(e)=>{ onTextTouchStart(e,i); startDragItem(e,'text',i); }} onMouseUp={(e)=>onTextTouchEnd(e,i)} onTouchEnd={(e)=>onTextTouchEnd(e,i)} style={{position:'absolute', left:t.x, top:t.y, color:t.color, fontSize:28, fontWeight:'bold', textShadow:'0 2px 4px black', cursor:'move', touchAction:'none', padding:'6px 10px', border: selectedText===i ? '2px solid #00e676' : '1px dashed rgba(255,255,255,0.4)', borderRadius:8}}>{t.text}</div>
+          );
+        })}
         {emojis.map((e:any,i:number)=>(
-          <div key={i} onMouseDown={(ev)=>startDragItem(ev,'emoji',i)} onTouchStart={(ev)=>startDragItem(ev,'emoji',i)} style={{position:'absolute', left:e.x, top:e.y, fontSize:40, cursor:'move', touchAction:'none'}}>✋ {e.emoji}</div>
+          <div key={i} onMouseDown={(ev)=>startDragItem(ev,'emoji',i)} onTouchStart={(ev)=>startDragItem(ev,'emoji',i)} style={{position:'absolute', left:e.x, top:e.y, fontSize:40, cursor:'move', touchAction:'none'}}>{e.emoji}</div>
         ))}
         {showTextInput && (
           <div style={{position:'absolute', top:'35%', left:16, right:16, background:'rgba(0,0,0,0.9)', borderRadius:16, padding:14, zIndex:30}}>
-            <input autoFocus value={directText} onChange={e=>setDirectText(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') confirmDirectText(); }} placeholder="Type here - keyboard go open..." style={{width:'100%', padding:'14px', borderRadius:10, border:'none', fontSize:18, background:'#222', color:'white', outline:'none', boxSizing:'border-box'}} />
+            <input autoFocus value={directText} onChange={e=>setDirectText(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') confirmDirectText(); }} placeholder="Type here..." style={{width:'100%', padding:'14px', borderRadius:10, border:'none', fontSize:18, background:'#222', color:'white', outline:'none', boxSizing:'border-box'}} />
             <div style={{display:'flex', gap:8, marginTop:10}}>
-              {COLORS.slice(0,6).map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:'50%',background:c,border:color===c?'3px solid white':'1px solid #555'}} />))}
+              {COLORS.map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:'50%',background:c,border:color===c?'3px solid white':'1px solid #555'}} />))}
             </div>
-            <p style={{color:'#aaa', fontSize:12, margin:'8px 0 0'}}>After you add am, hold am and drag am go anywhere</p>
             <div style={{display:'flex', gap:8, marginTop:10}}>
               <button onClick={()=>setShowTextInput(false)} style={{flex:1,padding:12,borderRadius:10,border:'none',background:'#333',color:'white'}}>Cancel</button>
               <button onClick={confirmDirectText} style={{flex:1,padding:12,borderRadius:10,border:'none',background:'#00a884',color:'white',fontWeight:'bold'}}>Add + Drag</button>
@@ -672,28 +721,42 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       </div>
       )}
 
-      {tool==='emoji' && (
-        <div style={{background:'#222', padding:12, display:'flex', gap:8, flexWrap:'wrap'}}>
-          {EMOJIS.map(e=><button key={e} onClick={()=>addEmoji(e)} style={{fontSize:30, background:'none', border:'none'}}>{e}</button>)}
+      {tool!=='crop' && (
+        <div style={{background:'#000', padding:'6px 12px', display:'flex', gap:8, overflowX:'auto'}}>
+          <span style={{color:'#aaa', fontSize:11, whiteSpace:'nowrap', alignSelf:'center'}}>↑ Swipe up for filters</span>
+          {FILTERS.map(f=>(
+            <button key={f.n} onClick={()=>setFilter(f.v)} style={{background: filter===f.v ? '#00a884' : '#222', color:'white', border:'none', padding:'6px 12px', borderRadius:20, fontSize:12, whiteSpace:'nowrap'}}>{f.n}</button>
+          ))}
         </div>
       )}
+
       {tool==='pen' && (
-        <div style={{background:'#111', padding:12}}>
-          <div style={{display:'flex', gap:8, overflowX:'auto', marginBottom:10}}>
-            {COLORS.map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:28, height:28, borderRadius:'50%', background:c, border: color===c ? '3px solid white' : '2px solid #555', cursor:'pointer', flexShrink:0}} />))}
+        <div style={{background:'#111', padding:'10px 12px'}}>
+          <div style={{display:'flex', gap:8, overflowX:'auto', marginBottom:8}}>
+            {COLORS.map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:26, height:26, borderRadius:'50%', background:c, border: color===c ? '3px solid white' : '2px solid #555', cursor:'pointer', flexShrink:0}} />))}
           </div>
           <div style={{display:'flex', alignItems:'center', gap:10, color:'white'}}>
-            <span style={{fontSize:12}}>Thin</span>
+            <span style={{fontSize:11}}>Thin</span>
             <input type="range" min={1} max={20} value={brushSize} onChange={e=>setBrushSize(Number(e.target.value))} style={{flex:1}} />
-            <span style={{fontSize:12}}>Thick</span>
+            <span style={{fontSize:11}}>Thick</span>
           </div>
-          <div style={{color:'#aaa', fontSize:12, marginTop:6}}>{isVideo ? '⏸️ Video don pause - draw now, ink no go break' : '✏️ Draw with finger'}</div>
         </div>
       )}
-      <div style={{background:'#111', padding:'12px', display:'flex', gap:8, alignItems:'center'}}>
-        <input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Add a caption..." style={{flex:1, padding:'10px 14px', borderRadius:20, border:'none', background:'#222', color:'white'}} />
-        <button onClick={handleSend} style={{width:48, height:48, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:20}}>➤</button>
+      {tool==='eraser' && (
+        <div style={{background:'#3a0a0a', padding:10, display:'flex', gap:8, alignItems:'center'}}>
+          <p style={{color:'white', fontSize:12, margin:0, flex:1}}>🧽 Rub pen line to erase am</p>
+          <button onClick={()=>setDrawLines([])} style={{background:'#ff5252', color:'white', border:'none', padding:'8px 12px', borderRadius:20, fontWeight:'bold', fontSize:12}}>Erase All</button>
+        </div>
+      )}
+
+      <div style={{background:'#000', padding:'10px 12px 14px', display:'flex', gap:8, alignItems:'center'}}>
+        <div style={{flex:1, background:'#222', borderRadius:24, padding:'8px 12px', display:'flex', alignItems:'center', gap:8}}>
+          <span style={{fontSize:18}}>🖼️</span>
+          <input value={caption} onChange={e=>setCaption(e.target.value)} placeholder="Add a caption..." style={{flex:1, background:'transparent', border:'none', color:'white', outline:'none', fontSize:15}} />
+          <span style={{fontSize:16, color:'#aaa'}}>@</span>
+        </div>
+        <button onClick={handleSend} style={{width:52, height:52, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:22, flexShrink:0}}>➤</button>
       </div>
     </div>
   );
-  }
+}
