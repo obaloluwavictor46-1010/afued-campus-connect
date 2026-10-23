@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react"
-import { Download, FileText, Plus, X } from "lucide-react"
+import { Download, FileText, Play, Plus, X } from "lucide-react"
 import { toast } from "sonner"
 
 // --- FIX: All missing exports defined here ---
@@ -23,9 +23,13 @@ export type MediaKind = "image" | "video" | "audio" | "file"
 export function kindOfUrl(url: string): MediaKind {
   if (!url) return "file"
   if (url.includes('iframe.mediadelivery.net')) return "video"
-  if (url.match(/\.(mp4|mov|webm|avi)$/i)) return "video"
-  if (url.match(/\.(mp3|wav|m4a|ogg)$/i)) return "audio"
-  if (url.match(/\.(jpg|jpeg|png|gif|webp)$/i)) return "image"
+  // FIX: Remove ?token=... & #t=... before checking extension - Supabase URLs get query
+  const clean = url.split("?")[0].split("#")[0].toLowerCase()
+  if (clean.match(/\.(mp4|mov|webm|avi|mkv|m4v)$/)) return "video"
+  if (clean.match(/\.(mp3|wav|m4a|ogg|aac)$/)) return "audio"
+  if (clean.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/)) return "image"
+  // FIX: Supabase / Bunny video wey no get extension but get video in path
+  if (url.includes("/video") || url.includes("video")) return "video"
   return "file"
 }
 
@@ -48,6 +52,84 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
+// === FIX 1: VIDEO WEY SHOW FACE QUICK, NO MORE BLACK 59s VIDEO ===
+function SmartVideo({ url, className }: { url: string, className?: string }) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [showPlay, setShowPlay] = useState(true)
+  const [poster, setPoster] = useState<string | undefined>(undefined)
+
+  // Jump to 0.8s where face dey, not 0s where e black, then capture that frame as poster
+  const makePoster = () => {
+    const v = videoRef.current
+    if (!v) return
+    // If video short, use 0.1s, if long use 0.8s - 1.5s
+    const target = v.duration > 2 ? 0.8 : 0.1
+    if (Math.abs(v.currentTime - target) > 0.1) {
+      v.currentTime = target
+      return
+    }
+    // Already for target, capture frame
+    try {
+      if (v.videoWidth > 0) {
+        const c = document.createElement("canvas")
+        c.width = v.videoWidth
+        c.height = v.videoHeight
+        const ctx = c.getContext("2d")
+        if (ctx) {
+          ctx.drawImage(v, 0, 0)
+          // If frame still black (all dark), try 1.5s once
+          const data = ctx.getImageData(0, 0, Math.min(20, c.width), Math.min(20, c.height)).data
+          let bright = 0
+          for (let i = 0; i < data.length; i += 4) bright += data[i] + data[i+1] + data[i+2]
+          const avg = bright / (data.length / 4)
+          if (avg < 12 && v.duration > 2 && v.currentTime < 1.4) {
+            v.currentTime = 1.5
+            return
+          }
+          setPoster(c.toDataURL("image/jpeg", 0.7))
+        }
+      }
+    } catch {}
+  }
+
+  return (
+    <div className="relative w-full bg-black rounded overflow-hidden">
+      <video
+        ref={videoRef}
+        src={url.includes("#t=") ? url : `${url}#t=0.8`}
+        poster={poster}
+        controls
+        playsInline
+        preload="metadata"
+        muted
+        className={`w-full rounded bg-black ${className || ""}`}
+        style={{ maxHeight: 480, objectFit: "contain" }}
+        onLoadedMetadata={makePoster}
+        onSeeked={makePoster}
+        onPlay={() => setShowPlay(false)}
+        onPause={() => setShowPlay(true)}
+        onClick={() => {
+          const v = videoRef.current
+          if (!v) return
+          if (v.paused) { v.muted = false; v.play().catch(()=>{}) } else v.pause()
+        }}
+      />
+      {showPlay && (
+        <button
+          type="button"
+          onClick={() => { const v = videoRef.current; if (v) { v.muted = false; v.play().catch(()=>{}) } }}
+          className="absolute inset-0 flex items-center justify-center bg-black/10"
+          aria-label="Play video"
+        >
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 text-white">
+            <Play className="h-6 w-6 ml-1" />
+          </span>
+        </button>
+      )}
+    </div>
+  )
+}
+
 // --- FIXED MediaView - FORCE STOP WHEN SCROLL COMOT ---
 export function MediaView({ url, kind, name, className }: { url: string, kind?: MediaKind, name?: string, className?: string }) {
   const k = (kind as MediaKind) || kindOfUrl(url)
@@ -63,28 +145,23 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
 
     const observer = new IntersectionObserver(
       ([entry]) => {
-        // FOR NORMAL VIDEO
         const video = videoRef.current
         if (video && !entry.isIntersecting) {
           video.pause()
         }
-
-        // FOR BUNNY IFRAME - FORCE KILL SOUND!
         const iframe = iframeRef.current
         if (iframe && isStreamVideo) {
           if (!entry.isIntersecting) {
             if (iframe.src !== "about:blank") {
               savedSrc.current = iframe.src
-              iframe.src = "about:blank" // KILL SOUND BY FORCE!
+              iframe.src = "about:blank"
             }
           } else {
             if (iframe.src === "about:blank" && savedSrc.current) {
-              iframe.src = savedSrc.current // Restore when scroll back
+              iframe.src = savedSrc.current
             }
           }
         }
-
-        // FOR AUDIO
         if (k === "audio" && !entry.isIntersecting) {
           const audio = wrap.querySelector("audio")
           if (audio) (audio as HTMLAudioElement).pause()
@@ -100,7 +177,7 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
   if (k === "file") return <FileChip url={url} name={name} className={className} />
   return (
     <div ref={wrapRef} className={`relative ${className}`}>
-      {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" />}
+      {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" loading="lazy" />}
       {k === "video" && (
         isStreamVideo ? (
           <iframe 
@@ -113,11 +190,11 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
             loading="lazy"
           />
         ) : (
-          <video ref={videoRef} src={url} controls playsInline preload="metadata" className="w-full rounded bg-black" />
+          <SmartVideo url={url} />
         )
       )}
-      {k === "audio" && <audio src={url} controls className="w-full" />}
-      {k !== "audio" && !isStreamVideo && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white" />}
+      {k === "audio" && <audio src={url} controls preload="metadata" className="w-full" />}
+      {k !== "audio" && !isStreamVideo && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white z-10" />}
     </div>
   )
 }
@@ -160,12 +237,27 @@ export function UploadBar({ pct }: { pct: number | null }) {
   return (<div className="mt-3"><div className="mb-1 text-xs font-semibold">{pct}%</div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} /></div></div>)
 }
 
+// FIX: Thumb video preview - no more black for picked video
+function ThumbVideo({ file }: { file: File }) {
+  const url = useMemo(() => URL.createObjectURL(file), [file])
+  const ref = useRef<HTMLVideoElement>(null)
+  useEffect(() => () => URL.revokeObjectURL(url), [url])
+  useEffect(() => {
+    const v = ref.current
+    if (!v) return
+    const onMeta = () => { if (v.duration > 1) v.currentTime = 0.8 }
+    v.addEventListener("loadedmetadata", onMeta)
+    return () => v.removeEventListener("loadedmetadata", onMeta)
+  }, [])
+  return <video ref={ref} src={`${url}#t=0.8`} muted playsInline preload="metadata" className="h-full w-full object-cover" />
+}
+
 function Thumb({ file, onRemove }: { file: File, onRemove?: () => void }) {
   const url = useMemo(() => URL.createObjectURL(file), [file])
   useEffect(() => () => URL.revokeObjectURL(url), [url])
   return (
     <div className="relative aspect-square overflow-hidden rounded border">
-      {file.type.startsWith("image/") ? <img src={url} alt={file.name} className="h-full w-full object-cover" /> : file.type.startsWith("video/") ? <video src={url} className="h-full w-full object-cover" /> : <div className="flex h-full flex-col items-center justify-center p-2"><FileText className="h-6 w-6" /><span className="text-xs truncate">{file.name}</span></div>}
+      {file.type.startsWith("image/") ? <img src={url} alt={file.name} className="h-full w-full object-cover" /> : file.type.startsWith("video/") ? <ThumbVideo file={file} /> : <div className="flex h-full flex-col items-center justify-center p-2"><FileText className="h-6 w-6" /><span className="text-xs truncate">{file.name}</span></div>}
       {file.type.startsWith("video/") && <span className="absolute bottom-1 left-1 bg-black/60 text-white text-[10px] px-1 rounded">VID</span>}
       {onRemove && <button type="button" onClick={onRemove} className="absolute top-1 right-1 rounded-full bg-black/60 p-1 text-white"><X className="h-3 w-3" /></button>}
     </div>
@@ -197,4 +289,4 @@ export function useMediaPicker(maxVideoMB = 500) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-      }
+  }
