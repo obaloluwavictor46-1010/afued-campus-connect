@@ -82,6 +82,12 @@ function ProfilePage() {
               <button onClick={logout} className="rounded-full border p-2 text-destructive"><LogOut className="h-4 w-4" /></button>
             </div>
           </div>
+          <button
+            onClick={() => navigate({ to: "/change-password" })}
+            className="mt-3 flex w-full items-center justify-center gap-2 rounded-full bg-yellow-100 py-3 text-sm font-bold text-yellow-800"
+          >
+            🔒 Change Password
+          </button>
           <h2 className="mt-3 font-display text-2xl font-extrabold">{profile?.full_name || "Student"}</h2>
           {profile?.faculty && <span className="mt-1 inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold">{profile.faculty}</span>}
           {p?.bio && <p className="mt-2 text-sm text-foreground">{p.bio}</p>}
@@ -159,4 +165,4 @@ function EditProfile({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-        }
+    }
