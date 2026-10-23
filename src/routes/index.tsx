@@ -1,6 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
-import { ImagePlus, Loader2, Paperclip, MoreHorizontal, Pencil, Trash2, Share2, Music } from "lucide-react";
+import { ImagePlus, Loader2, Paperclip, MoreHorizontal, Pencil, Trash2, Share2, Music, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
@@ -23,6 +23,24 @@ export const Route = createFileRoute("/")({
   component: Feed,
 });
 
+// === ADDED: Check video duration - Max 3 minutes ===
+function checkVideoDuration(file: File): Promise<{ ok: boolean; dur: number }> {
+  return new Promise((resolve) => {
+    if (!file.type?.startsWith("video/")) { resolve({ ok: true, dur: 0 }); return; }
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.preload = "metadata";
+    v.onloadedmetadata = () => {
+      URL.revokeObjectURL(url);
+      const dur = v.duration || 0;
+      if (dur > 180) resolve({ ok: false, dur });
+      else resolve({ ok: true, dur });
+    };
+    v.onerror = () => { URL.revokeObjectURL(url); resolve({ ok: true, dur: 0 }); };
+    v.src = url;
+  });
+}
+
 function Feed() {
   return <AppShell><FeedInner /></AppShell>;
 }
@@ -39,6 +57,121 @@ function FeedInner() {
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editContent, setEditContent] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
+
+  // === ADDED: REPOST LIKE TIKTOK ===
+  const [repostCounts, setRepostCounts] = useState<Record<string, number>>({});
+  const [myReposts, setMyReposts] = useState<Set<string>>(new Set());
+  const [repostBy, setRepostBy] = useState<Record<string, any[]>>({});
+  const [repostingId, setRepostingId] = useState<string | null>(null);
+
+  const loadReposts = async () => {
+    const { data } = await supabase.from("reposts").select("post_id, user_id, created_at").order("created_at", { ascending: false });
+    if (!data) return;
+    const counts: Record<string, number> = {};
+    const mine = new Set<string>();
+    const by: Record<string, any[]> = {};
+    const userIds: string[] = [];
+    (data as any[]).forEach((r) => {
+      counts[r.post_id] = (counts[r.post_id] || 0) + 1;
+      if (r.user_id === user?.id) mine.add(r.post_id);
+      if (!by[r.post_id]) by[r.post_id] = [];
+      by[r.post_id].push(r);
+      if (!userIds.includes(r.user_id)) userIds.push(r.user_id);
+    });
+    setRepostCounts(counts);
+    setMyReposts(mine);
+    setRepostBy(by);
+    if (userIds.length) {
+      const profs = await fetchProfiles(userIds);
+      setRepostBy((prev) => {
+        const next: any = {};
+        Object.keys(prev).forEach((pid) => {
+          next[pid] = prev[pid].map((r: any) => ({ ...r, profile: profs[r.user_id] }));
+        });
+        return next;
+      });
+    }
+  };
+
+  const handleRepost = async (post: Post) => {
+    if (!user) { toast.error("Login first"); return; }
+    if (repostingId === post.id) return;
+    setRepostingId(post.id);
+    const already = myReposts.has(post.id);
+    try {
+      if (already) {
+        const { error } = await supabase.from("reposts").delete().eq("user_id", user.id).eq("post_id", post.id);
+        if (error) throw error;
+        toast.success("Repost removed");
+        setMyReposts(prev => { const n = new Set(prev); n.delete(post.id); return n; });
+        setRepostCounts(prev => ({ ...prev, [post.id]: Math.max(0, (prev[post.id] || 1) - 1) }));
+      } else {
+        const { error } = await supabase.from("reposts").insert({ user_id: user.id, post_id: post.id });
+        if (error) throw error;
+        toast.success("Reposted! 🔁 E go show for your profile");
+        setMyReposts(prev => new Set(prev).add(post.id));
+        setRepostCounts(prev => ({ ...prev, [post.id]: (prev[post.id] || 0) + 1 }));
+      }
+    } catch (e: any) {
+      if (e.message?.includes("reposts") || e.code === "42P01") {
+        toast.error("Repost table never create yet - run SQL for reposts first");
+      } else toast.error(e.message || "Repost failed");
+    } finally { setRepostingId(null); }
+  };
+
+  // === ADDED: Only 1 video go play at a time - top video go pause when you tap girl video ===
+  useEffect(() => {
+    const stopOthers = (e: any) => {
+      const target = e.target as HTMLVideoElement;
+      if (!target || target.tagName !== "VIDEO") return;
+      document.querySelectorAll("video").forEach((v: any) => {
+        if (v !== target) { try { v.pause(); } catch {} }
+      });
+    };
+    document.addEventListener("play", stopOthers, true);
+    return () => document.removeEventListener("play", stopOthers, true);
+  }, []);
+
+  // === ADDED: Fast play + auto-pause when scroll comot + resurrect dead video ===
+  useEffect(() => {
+    const obs = new IntersectionObserver((entries) => {
+      entries.forEach((en) => {
+        if (!en.isIntersecting) {
+          const v = en.target as HTMLVideoElement;
+          try { v.pause(); } catch {}
+        }
+      });
+    }, { threshold: 0.2 });
+    const patchVideos = () => {
+      document.querySelectorAll("video").forEach((v: any) => {
+        if (!v.getAttribute("data-patched")) {
+          v.setAttribute("data-patched", "1");
+          v.preload = "metadata";
+          try { (v as any).playsInline = true; } catch {}
+          obs.observe(v);
+          v.addEventListener("error", () => {
+            if (!v.getAttribute("data-retried")) {
+              v.setAttribute("data-retried", "1");
+              const src = v.currentSrc || v.src;
+              if (src) {
+                setTimeout(() => { try { v.src = src; v.load(); } catch {} }, 800);
+              }
+            }
+          });
+          v.addEventListener("click", () => {
+            if (v.readyState === 0 || v.networkState === 3) {
+              try { v.load(); } catch {}
+            }
+          });
+        }
+      });
+    };
+    patchVideos();
+    const mo = new MutationObserver(patchVideos);
+    mo.observe(document.body, { childList: true, subtree: true });
+    const timer = setInterval(patchVideos, 1500);
+    return () => { mo.disconnect(); clearInterval(timer); obs.disconnect(); };
+  }, []);
 
   const load = async () => {
     let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50);
@@ -109,10 +242,12 @@ function FeedInner() {
   useEffect(() => {
     setLoading(true);
     load();
+    loadReposts();
     const ch = supabase
       .channel(`feed-${channel}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, load)
+      .on("postgres_changes", { event: "*", schema: "public", table: "reposts" }, loadReposts)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [channel]);
@@ -147,7 +282,11 @@ function FeedInner() {
         ) : visiblePosts.length === 0 ? (
           <p className="py-10 text-center text-muted-foreground">No posts in this channel yet.</p>
         ) : (
-          visiblePosts.map((p) => (
+          visiblePosts.map((p) => {
+            const isReposted = myReposts.has(p.id);
+            const reposters = repostBy[p.id] || [];
+            const firstReposter = reposters[0]?.profile;
+            return (
             <div key={p.id} className="relative">
               {(p as any).isUploading && (
                 <div className="absolute top-0 left-0 right-0 z-20 h-1 overflow-hidden rounded-t-2xl bg-muted">
@@ -166,6 +305,9 @@ function FeedInner() {
                     <button onClick={(e) => { e.stopPropagation(); handleShare(p); }} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-muted text-left">
                       <Share2 className="h-4 w-4" /> Share / Invite
                     </button>
+                    <button onClick={(e) => { e.stopPropagation(); handleRepost(p); setOpenMenu(null); }} className="flex w-full items-center gap-2 px-4 py-3 text-sm hover:bg-muted text-left">
+                      <Repeat2 className="h-4 w-4" /> {isReposted ? "Undo Repost" : "Repost"}
+                    </button>
                     {p.user_id === user?.id && (
                       <>
                         <div className="h-[1px] bg-gray-100" />
@@ -180,12 +322,30 @@ function FeedInner() {
                   </div>
                 )}
               </div>
+              {/* === ADDED: REPOST LABEL LIKE TIKTOK === */}
+              {(isReposted || reposters.length > 0) && (
+                <div className="px-4 pt-3 flex items-center gap-1.5 text-xs font-semibold text-green-700">
+                  <Repeat2 className="h-3.5 w-3.5" />
+                  {isReposted ? "You reposted this" : `${firstReposter?.full_name || "Someone"} reposted this`}
+                  {(repostCounts[p.id] || 0) > 1 && <span className="text-muted-foreground font-normal">• {repostCounts[p.id]} reposts</span>}
+                </div>
+              )}
               <div className={(p as any).isUploading ? "opacity-80" : ""}>
                 <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
               </div>
+              {/* === ADDED: REPOST BAR LIKE TIKTOK - Under post === */}
+              <div className="flex items-center gap-2 px-4 pb-3">
+                <button onClick={() => handleRepost(p)} disabled={repostingId === p.id} className={`flex items-center gap-1.5 rounded-full px-4 py-2 text-xs font-bold transition ${isReposted ? "bg-green-100 text-green-700 border border-green-200" : "bg-muted text-muted-foreground"}`}>
+                  <Repeat2 className="h-4 w-4" />
+                  {repostingId === p.id ? "Wait..." : isReposted ? "Reposted" : "Repost"} • {repostCounts[p.id] || 0}
+                </button>
+                <button onClick={() => setOpenPost(p.id)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">💬 {counts[p.id] ?? 0}</button>
+                <button onClick={() => handleShare(p)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">↗ Share</button>
+              </div>
               {(p as any).isUploading && <p className="px-4 pb-2 text-[11px] text-primary font-semibold">Uploading fast like WhatsApp... {(p as any).uploadPct || 0}%</p>}
             </div>
-          ))
+            );
+          })
         )}
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
@@ -267,6 +427,16 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
     const filesToUpload = editedFiles.length > 0 ? editedFiles : picker.files;
+    // === ADDED: Block video pass 3 mins BEFORE upload ===
+    for (const f of filesToUpload) {
+      if ((f as any).type?.startsWith("video/")) {
+        const check = await checkVideoDuration(f as File);
+        if (!check.ok) {
+          toast.error(`Video too long! ${Math.floor(check.dur)}s - Max na 3 minutes (180s). Cut am short and try again.`);
+          return;
+        }
+      }
+    }
     const localImages: string[] = [];
     let localVideo = "";
     let localMusic = "";
@@ -677,7 +847,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       const burnedFile = await burnVideoWithOverlays();
       setIsBurning(false);
       if(burnedFile){
-        // caption na ONLY caption box, screen text NO go join caption
         onSend(URL.createObjectURL(burnedFile), caption, burnedFile);
       } else {
         onSend(imageUrl, caption);
@@ -830,4 +999,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-       }
+  }
