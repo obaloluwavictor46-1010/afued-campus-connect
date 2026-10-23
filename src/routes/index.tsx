@@ -123,7 +123,6 @@ function FeedInner() {
     return () => window.removeEventListener("click", close);
   }, []);
 
-  // Hide for Me DON COMOT - no more filter
   const visiblePosts = posts;
 
   return (
@@ -221,8 +220,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   const [busy, setBusy] = useState(false);
   useEffect(() => { if (defaultChannel !== "All") setFaculty(defaultChannel); }, [defaultChannel]);
   const [pct, setPct] = useState<number | null>(null);
-
-  // === WHATSAPP EDITOR FOR FEED - PICTURE + VIDEO ===
   const [editorFile, setEditorFile] = useState<File | null>(null);
   const [editorUrl, setEditorUrl] = useState<string | null>(null);
   const [editedFiles, setEditedFiles] = useState<File[]>([]);
@@ -246,7 +243,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
 
   function onEditorSend(editedDataUrl: string, captionFromEditor: string) {
     if (captionFromEditor) setContent(prev => prev ? prev + " " + captionFromEditor : captionFromEditor);
-    // If na video, no convert to jpg - keep original video file
     if (editorFile?.type?.startsWith('video/')) {
       toast.success("Caption added! Press Post now 🎬");
       setEditorUrl(null); setEditorFile(null);
@@ -262,18 +258,14 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
 
   const post = async () => {
     if (!user || (!content.trim() && !picker.files.length && editedFiles.length===0)) return;
-    
     const since = new Date(); since.setHours(0, 0, 0, 0);
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
-
     const filesToUpload = editedFiles.length > 0 ? editedFiles : picker.files;
-
     const localImages: string[] = [];
     let localVideo = "";
     let localMusic = "";
     const blobUrls: string[] = [];
-
     for (const f of filesToUpload) {
       const blobUrl = URL.createObjectURL(f);
       blobUrls.push(blobUrl);
@@ -285,7 +277,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
       else if (isVideo) localVideo = blobUrl;
       else localImages.push(blobUrl);
     }
-
     const tempId = `temp-${Date.now()}`;
     const tempPost: any = {
       id: tempId,
@@ -300,7 +291,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
       isUploading: true,
       uploadPct: 5
     };
-
     onOptimisticAdd(tempPost);
     const savedContent = content.trim();
     const savedFaculty = faculty;
@@ -309,12 +299,10 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     setEditedFiles([]);
     setShowEditorBtn(false);
     setBusy(true);
-
     try {
       let image_urls: string[] = [];
       let music_url = "";
       let video_url = "";
-      
       for (let i = 0; i < filesToUpload.length; i++) {
         const file: any = filesToUpload[i];
         const name = file.name?.toLowerCase() || "";
@@ -329,7 +317,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         else if (isVideo) video_url = url;
         else image_urls.push(url);
       }
-
       const { data, error } = await supabase.from("posts").insert({
         user_id: user.id,
         content: savedContent,
@@ -339,19 +326,11 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         music_url: music_url,
         video_url: video_url,
       } as any).select().single();
-      
       if (error) throw error;
-      
-      onOptimisticReplace(tempId, {
-        ...data,
-        uploadPct: 100,
-        isUploading: false
-      });
-
+      onOptimisticReplace(tempId, { ...data, uploadPct: 100, isUploading: false });
       blobUrls.forEach(u => URL.revokeObjectURL(u));
       toast.success("Posted! Fast like WhatsApp! 🚀");
       onPosted();
-      
     } catch (e) { 
       toast.error((e as Error).message); 
       onOptimisticRemove(tempId);
@@ -397,7 +376,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
           </button>
         </div>
       </div>
-
       {editorUrl && (
         <FeedWhatsAppEditor imageUrl={editorUrl} isVideo={editorFile?.type?.startsWith('video/')} onCancel={() => { setEditorUrl(null); setEditorFile(null); }} onSend={onEditorSend} />
       )}
@@ -405,7 +383,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   );
 }
 
-// === FINAL WHATSAPP EDITOR FOR FEED - NO Cropper, NO prompt(), 4-CORNER CROP, VIDEO SUPPORT ===
+// === FEED EDITOR V3 - GALAXY CROP + DRAG TEXT/EMOJI + VIDEO PAUSE - NO Cropper, NO prompt(), NO 4-corner ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image();
   image.crossOrigin = "anonymous";
@@ -435,9 +413,23 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const [directText, setDirectText] = useState('');
   const [showTextInput, setShowTextInput] = useState(false);
   const [drawLines, setDrawLines] = useState<any[]>([]);
-  // 4-CORNER CROP - picture no go move
-  const [cropBox, setCropBox] = useState({ x: 10, y: 10, w: 80, h: 80 });
-  const [dragCorner, setDragCorner] = useState<string | null>(null);
+  const [dragItem, setDragItem] = useState<any>(null);
+
+  // STEP 1: GALAXY CROP - drag middle, pinch zoom, frame dey still
+  const [gx, setGx] = useState(0);
+  const [gy, setGy] = useState(0);
+  const [gScale, setGScale] = useState(1);
+  const galaxyDrag = useRef<any>(null);
+  const galaxyPinch = useRef<number | null>(null);
+  const galaxyStartScale = useRef(1);
+
+  // STEP 3: VIDEO PAUSE - when you draw / type, video pause so ink no break
+  useEffect(()=>{
+    if(isVideo && videoRef.current){
+      if(tool==='pen' || tool==='text' || tool==='emoji') videoRef.current.pause();
+      else videoRef.current.play().catch(()=>{});
+    }
+  },[tool, isVideo]);
 
   useEffect(()=>{
     if(isVideo) return;
@@ -457,19 +449,42 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
 
   function getPos(e:any){
     const el = isVideo ? videoRef.current : canvasRef.current;
-    if(!el) return {x:0,y:0};
+    if(!el) return {x:0,y:0,clientX:0,clientY:0};
     const rect = el.getBoundingClientRect();
     const cx = e.clientX ?? e.touches?.[0]?.clientX;
     const cy = e.clientY ?? e.touches?.[0]?.clientY;
-    return {x: cx - rect.left, y: cy - rect.top};
+    return {x: cx - rect.left, y: cy - rect.top, clientX: cx, clientY: cy};
   }
+
+  // STEP 2: DRAG TEXT / EMOJI
+  function startDragItem(e:any, type:string, index:number){
+    e.stopPropagation();
+    const p = getPos(e);
+    const item = type==='text' ? texts[index] : emojis[index];
+    setDragItem({type, index, startX: p.clientX, startY: p.clientY, origX: item.x, origY: item.y});
+  }
+  function moveDragItem(e:any){
+    if(!dragItem) return;
+    const p = getPos(e);
+    const dx = p.clientX - dragItem.startX;
+    const dy = p.clientY - dragItem.startY;
+    if(dragItem.type==='text'){
+      setTexts(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
+    } else {
+      setEmojis(prev=>prev.map((t,i)=> i===dragItem.index ? {...t, x: dragItem.origX+dx, y: dragItem.origY+dy} : t));
+    }
+  }
+  function endDragItem(){ setDragItem(null); }
+
   function startDraw(e:any){
+    if(dragItem) return;
     if(tool!=='pen') return;
     setIsDrawing(true);
     const {x,y} = getPos(e);
     setDrawLines(prev=>[...prev, {color, size: brushSize, points:[{x,y}]}]);
   }
   function draw(e:any){
+    if(dragItem){ moveDragItem(e); return; }
     if(!isDrawing) return;
     const {x,y} = getPos(e);
     setDrawLines(prev=>{
@@ -479,7 +494,7 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       return copy;
     });
   }
-  function endDraw(){ setIsDrawing(false); }
+  function endDraw(){ setIsDrawing(false); endDragItem(); }
   function undo(){
     if(drawLines.length>0) setDrawLines(prev=>prev.slice(0,-1));
     else if(texts.length>0) setTexts(prev=>prev.slice(0,-1));
@@ -487,52 +502,67 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   }
   function confirmDirectText(){
     if(!directText.trim()){ setShowTextInput(false); return; }
-    setTexts(prev=>[...prev, {text: directText.trim(), x: 80, y: 120 + prev.length*50, color}]);
+    setTexts(prev=>[...prev, {text: directText.trim(), x: 80, y: 150, color}]);
     setDirectText(''); setShowTextInput(false); setTool('pen');
   }
   function addEmoji(emoji:string){
-    setEmojis(prev=>[...prev, {emoji, x: 100+prev.length*50, y: 200}]);
+    setEmojis(prev=>[...prev, {emoji, x: 120, y: 220}]);
   }
-  function onCropDrag(e:any){
-    if(!dragCorner) return;
-    const container = document.getElementById('crop-container-feed');
-    if(!container) return;
-    const rect = container.getBoundingClientRect();
-    const cx = e.clientX ?? e.touches?.[0]?.clientX;
-    const cy = e.clientY ?? e.touches?.[0]?.clientY;
-    const px = ((cx - rect.left) / rect.width) * 100;
-    const py = ((cy - rect.top) / rect.height) * 100;
-    const clampedX = Math.max(0, Math.min(100, px));
-    const clampedY = Math.max(0, Math.min(100, py));
-    setCropBox(prev=>{
-      let next = {...prev};
-      if(dragCorner==='tl'){ next.w = prev.w + (prev.x - clampedX); next.h = prev.h + (prev.y - clampedY); next.x = clampedX; next.y = clampedY; }
-      if(dragCorner==='tr'){ next.w = clampedX - prev.x; next.h = prev.h + (prev.y - clampedY); next.y = clampedY; }
-      if(dragCorner==='bl'){ next.w = prev.w + (prev.x - clampedX); next.h = clampedY - prev.y; next.x = clampedX; }
-      if(dragCorner==='br'){ next.w = clampedX - prev.x; next.h = clampedY - prev.y; }
-      if(next.w < 10) next.w = 10;
-      if(next.h < 10) next.h = 10;
-      if(next.w > 100) next.w = 100;
-      if(next.h > 100) next.h = 100;
-      return next;
-    });
-  }
-  async function applyCornerCrop(){
+
+  // STEP 1: GALAXY CROP FUNCTIONS
+  async function applyGalaxyCrop(){
     const img = new Image();
     img.crossOrigin='anonymous';
     img.src = currentImage;
     await new Promise((res)=>(img.onload=res));
-    const pixelCrop = {
-      x: (cropBox.x/100)*img.width,
-      y: (cropBox.y/100)*img.height,
-      width: (cropBox.w/100)*img.width,
-      height: (cropBox.h/100)*img.height,
-    };
-    const cropped = await getCroppedImg(currentImage, pixelCrop);
+    const canvas = document.createElement('canvas');
+    canvas.width = img.width;
+    canvas.height = img.height;
+    const ctx = canvas.getContext('2d')!;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0,0,img.width,img.height);
+    const drawW = img.width * gScale;
+    const drawH = img.height * gScale;
+    const offsetX = (img.width - drawW)/2 + (gx * 2);
+    const offsetY = (img.height - drawH)/2 + (gy * 2);
+    ctx.drawImage(img, offsetX, offsetY, drawW, drawH);
+    const cropped = canvas.toDataURL('image/jpeg', 0.92);
     setCurrentImage(cropped);
-    setCropBox({x:10,y:10,w:80,h:80});
+    setGx(0); setGy(0); setGScale(1);
     setTool('pen');
   }
+  function onGalaxyTouchStart(e:any){
+    if(e.touches?.length===2){
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      galaxyPinch.current = Math.sqrt(dx*dx+dy*dy);
+      galaxyStartScale.current = gScale;
+      return;
+    }
+    const cx = e.clientX ?? e.touches?.[0]?.clientX;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY;
+    galaxyDrag.current = {x: cx, y: cy, gx, gy};
+  }
+  function onGalaxyTouchMove(e:any){
+    if(e.touches?.length===2 && galaxyPinch.current){
+      const dx = e.touches[0].clientX - e.touches[1].clientX;
+      const dy = e.touches[0].clientY - e.touches[1].clientY;
+      const dist = Math.sqrt(dx*dx+dy*dy);
+      const newScale = galaxyStartScale.current * (dist / galaxyPinch.current);
+      setGScale(Math.max(1, Math.min(3, newScale)));
+      return;
+    }
+    if(!galaxyDrag.current) return;
+    const cx = e.clientX ?? e.touches?.[0]?.clientX;
+    const cy = e.clientY ?? e.touches?.[0]?.clientY;
+    setGx(galaxyDrag.current.gx + (cx - galaxyDrag.current.x));
+    setGy(galaxyDrag.current.gy + (cy - galaxyDrag.current.y));
+  }
+  function onGalaxyTouchEnd(){
+    galaxyDrag.current = null;
+    galaxyPinch.current = null;
+  }
+
   async function handleSend(){
     if(isVideo){
       const textPart = texts.map((t:any)=>t.text).join(' ');
@@ -574,28 +604,44 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       </div>
 
       {tool==='crop' && !isVideo ? (
-        <div id="crop-container-feed" onMouseMove={onCropDrag} onTouchMove={onCropDrag} onMouseUp={()=>setDragCorner(null)} onTouchEnd={()=>setDragCorner(null)} style={{flex:1, position:'relative', background:'#000', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', touchAction:'none'}}>
-          <img src={currentImage} style={{maxWidth:'100%', maxHeight:'100%', objectFit:'contain', pointerEvents:'none'}} />
-          <div style={{position:'absolute', left:`${cropBox.x}%`, top:`${cropBox.y}%`, width:`${cropBox.w}%`, height:`${cropBox.h}%`, border:'2px solid white', boxShadow:'0 0 0 9999px rgba(0,0,0,0.6)', boxSizing:'border-box'}}>
-            <div style={{position:'absolute', left:'33.3%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.4)'}} />
-            <div style={{position:'absolute', left:'66.6%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.4)'}} />
-            <div style={{position:'absolute', top:'33.3%', left:0, right:0, height:1, background:'rgba(255,255,255,0.4)'}} />
-            <div style={{position:'absolute', top:'66.6%', left:0, right:0, height:1, background:'rgba(255,255,255,0.4)'}} />
-            <div onMouseDown={()=>setDragCorner('tl')} onTouchStart={()=>setDragCorner('tl')} style={{position:'absolute', left:-14, top:-14, width:28, height:28, background:'white', borderRadius:'50%', border:'3px solid #00a884', cursor:'nwse-resize', touchAction:'none', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:'bold'}}>↖</div>
-            <div onMouseDown={()=>setDragCorner('tr')} onTouchStart={()=>setDragCorner('tr')} style={{position:'absolute', right:-14, top:-14, width:28, height:28, background:'white', borderRadius:'50%', border:'3px solid #00a884', cursor:'nesw-resize', touchAction:'none', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:'bold'}}>↗</div>
-            <div onMouseDown={()=>setDragCorner('bl')} onTouchStart={()=>setDragCorner('bl')} style={{position:'absolute', left:-14, bottom:-14, width:28, height:28, background:'white', borderRadius:'50%', border:'3px solid #00a884', cursor:'nesw-resize', touchAction:'none', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:'bold'}}>↙</div>
-            <div onMouseDown={()=>setDragCorner('br')} onTouchStart={()=>setDragCorner('br')} style={{position:'absolute', right:-14, bottom:-14, width:28, height:28, background:'white', borderRadius:'50%', border:'3px solid #00a884', cursor:'nwse-resize', touchAction:'none', display:'flex', alignItems:'center', justifyContent:'center', fontSize:12, fontWeight:'bold'}}>↘</div>
+        <div style={{position:'relative', flex:1, background:'#000', display:'flex', flexDirection:'column', overflow:'hidden'}}>
+          <div style={{textAlign:'center', color:'white', fontSize:13, padding:'10px'}}>
+            👆 Drag middle to move picture • Pinch 2 fingers to zoom • Like Samsung Gallery
           </div>
-          <div style={{position:'absolute', bottom:16, left:16, right:16, display:'flex', gap:10, zIndex:10}}>
-            <button onClick={()=>setTool('pen')} style={{flex:1, background:'#333', color:'white', border:'none', padding:'12px', borderRadius:20}}>Cancel</button>
-            <button onClick={applyCornerCrop} style={{flex:1, background:'#00a884', color:'white', border:'none', padding:'12px', borderRadius:20, fontWeight:'bold'}}>Done Crop ✂️</button>
+          <div
+            onMouseDown={onGalaxyTouchStart}
+            onMouseMove={onGalaxyTouchMove}
+            onMouseUp={onGalaxyTouchEnd}
+            onTouchStart={onGalaxyTouchStart}
+            onTouchMove={onGalaxyTouchMove}
+            onTouchEnd={onGalaxyTouchEnd}
+            style={{flex:1, position:'relative', overflow:'hidden', touchAction:'none', cursor:'grab'}}
+          >
+            <img src={currentImage} draggable={false} style={{position:'absolute', left:'50%', top:'50%', width:'90%', height:'80%', objectFit:'cover', transform:`translate(calc(-50% + ${gx}px), calc(-50% + ${gy}px)) scale(${gScale})`, pointerEvents:'none'}} />
+            <div style={{position:'absolute', left:'5%', top:'10%', width:'90%', height:'80%', border:'2px solid white', pointerEvents:'none', boxSizing:'border-box'}}>
+              <div style={{position:'absolute', left:'33.3%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.5)'}} />
+              <div style={{position:'absolute', left:'66.6%', top:0, bottom:0, width:1, background:'rgba(255,255,255,0.5)'}} />
+              <div style={{position:'absolute', top:'33.3%', left:0, right:0, height:1, background:'rgba(255,255,255,0.5)'}} />
+              <div style={{position:'absolute', top:'66.6%', left:0, right:0, height:1, background:'rgba(255,255,255,0.5)'}} />
+            </div>
           </div>
-          <div style={{position:'absolute', top:12, left:0, right:0, textAlign:'center', color:'white', fontSize:12, background:'rgba(0,0,0,0.5)', padding:'6px'}}>Drag the 4 white corners to crop - Picture no go move</div>
+          <div style={{background:'#111', padding:'12px'}}>
+            <div style={{display:'flex', alignItems:'center', gap:10, color:'white', marginBottom:12}}>
+              <span style={{fontSize:12}}>Zoom Out</span>
+              <input type="range" min={1} max={3} step={0.1} value={gScale} onChange={e=>setGScale(Number(e.target.value))} style={{flex:1}} />
+              <span style={{fontSize:12}}>Zoom In</span>
+            </div>
+            <div style={{display:'flex', gap:10}}>
+              <button onClick={()=>{ setGx(0); setGy(0); setGScale(1); setTool('pen'); }} style={{flex:1, background:'#333', color:'white', border:'none', padding:'12px', borderRadius:20}}>Cancel</button>
+              <button onClick={()=>{ setGx(0); setGy(0); setGScale(1); }} style={{background:'#444', color:'white', border:'none', padding:'12px 16px', borderRadius:20}}>Reset</button>
+              <button onClick={applyGalaxyCrop} style={{flex:1, background:'#00a884', color:'white', border:'none', padding:'12px', borderRadius:20, fontWeight:'bold'}}>Done Crop ✂️</button>
+            </div>
+          </div>
         </div>
       ) : (
       <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', background:'#000'}} onMouseDown={startDraw} onMouseMove={draw} onMouseUp={endDraw} onTouchStart={startDraw} onTouchMove={draw} onTouchEnd={endDraw}>
         {isVideo ? (
-          <video ref={videoRef} src={currentImage} controls playsInline autoPlay loop style={{maxWidth:'100%', maxHeight:'100%'}} />
+          <video ref={videoRef} src={currentImage} controls playsInline autoPlay loop muted style={{maxWidth:'100%', maxHeight:'100%'}} />
         ) : (
           <canvas ref={canvasRef} style={{maxWidth:'100%', maxHeight:'100%', touchAction:'none'}} />
         )}
@@ -605,20 +651,21 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
           ))}
         </svg>
         {texts.map((t:any,i:number)=>(
-          <div key={i} style={{position:'absolute', left:t.x, top:t.y, color:t.color, fontSize:28, fontWeight:'bold', textShadow:'0 2px 4px black'}}>{t.text}</div>
+          <div key={i} onMouseDown={(e)=>startDragItem(e,'text',i)} onTouchStart={(e)=>startDragItem(e,'text',i)} style={{position:'absolute', left:t.x, top:t.y, color:t.color, fontSize:28, fontWeight:'bold', textShadow:'0 2px 4px black', cursor:'move', touchAction:'none', padding:'6px 10px', border:'1px dashed rgba(255,255,255,0.5)', borderRadius:8}}>✋ {t.text}</div>
         ))}
         {emojis.map((e:any,i:number)=>(
-          <div key={i} style={{position:'absolute', left:e.x, top:e.y, fontSize:40}}>{e.emoji}</div>
+          <div key={i} onMouseDown={(ev)=>startDragItem(ev,'emoji',i)} onTouchStart={(ev)=>startDragItem(ev,'emoji',i)} style={{position:'absolute', left:e.x, top:e.y, fontSize:40, cursor:'move', touchAction:'none'}}>✋ {e.emoji}</div>
         ))}
         {showTextInput && (
-          <div style={{position:'absolute', top:'40%', left:16, right:16, background:'rgba(0,0,0,0.85)', borderRadius:16, padding:14, zIndex:20}}>
-            <input autoFocus value={directText} onChange={e=>setDirectText(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') confirmDirectText(); if(e.key==='Escape') setShowTextInput(false); }} placeholder="Type directly here..." style={{width:'100%', padding:'12px', borderRadius:10, border:'none', fontSize:16, background:'#222', color:'white', outline:'none', boxSizing:'border-box'}} />
+          <div style={{position:'absolute', top:'35%', left:16, right:16, background:'rgba(0,0,0,0.9)', borderRadius:16, padding:14, zIndex:30}}>
+            <input autoFocus value={directText} onChange={e=>setDirectText(e.target.value)} onKeyDown={e=>{ if(e.key==='Enter') confirmDirectText(); }} placeholder="Type here - keyboard go open..." style={{width:'100%', padding:'14px', borderRadius:10, border:'none', fontSize:18, background:'#222', color:'white', outline:'none', boxSizing:'border-box'}} />
             <div style={{display:'flex', gap:8, marginTop:10}}>
               {COLORS.slice(0,6).map(c=>(<div key={c} onClick={()=>setColor(c)} style={{width:28,height:28,borderRadius:'50%',background:c,border:color===c?'3px solid white':'1px solid #555'}} />))}
             </div>
+            <p style={{color:'#aaa', fontSize:12, margin:'8px 0 0'}}>After you add am, hold am and drag am go anywhere</p>
             <div style={{display:'flex', gap:8, marginTop:10}}>
-              <button onClick={()=>setShowTextInput(false)} style={{flex:1,padding:10,borderRadius:10,border:'none',background:'#333',color:'white'}}>Cancel</button>
-              <button onClick={confirmDirectText} style={{flex:1,padding:10,borderRadius:10,border:'none',background:'#00a884',color:'white',fontWeight:'bold'}}>Add to Picture</button>
+              <button onClick={()=>setShowTextInput(false)} style={{flex:1,padding:12,borderRadius:10,border:'none',background:'#333',color:'white'}}>Cancel</button>
+              <button onClick={confirmDirectText} style={{flex:1,padding:12,borderRadius:10,border:'none',background:'#00a884',color:'white',fontWeight:'bold'}}>Add + Drag</button>
             </div>
           </div>
         )}
@@ -640,7 +687,7 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
             <input type="range" min={1} max={20} value={brushSize} onChange={e=>setBrushSize(Number(e.target.value))} style={{flex:1}} />
             <span style={{fontSize:12}}>Thick</span>
           </div>
-          <div style={{color:'#aaa', fontSize:12, marginTop:6}}>✏️ Draw with finger - e go show on top picture/video</div>
+          <div style={{color:'#aaa', fontSize:12, marginTop:6}}>{isVideo ? '⏸️ Video don pause - draw now, ink no go break' : '✏️ Draw with finger'}</div>
         </div>
       )}
       <div style={{background:'#111', padding:'12px', display:'flex', gap:8, alignItems:'center'}}>
@@ -649,4 +696,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       </div>
     </div>
   );
-}
+  }
