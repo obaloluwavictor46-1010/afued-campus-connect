@@ -3,7 +3,9 @@ import { useEffect, useState } from "react";
 import { supabase, fetchProfiles, type Post, type Profile } from "@/lib/supabase";
 import { AppShell } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
-import { Loader2, GraduationCap } from "lucide-react";
+import { Loader2, GraduationCap, Repeat2, Share2 } from "lucide-react";
+import { toast } from "sonner";
+import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/post/$postId")({
   component: SinglePost,
@@ -11,9 +13,66 @@ export const Route = createFileRoute("/post/$postId")({
 
 function SinglePost() {
   const { postId } = Route.useParams();
+  const { user } = useAuth();
   const [post, setPost] = useState<Post | null>(null);
   const [author, setAuthor] = useState<Profile | null>(null);
   const [loading, setLoading] = useState(true);
+  const [commentCount, setCommentCount] = useState(0);
+
+  // === ADDED: REPOST LIKE TIKTOK ===
+  const [repostCount, setRepostCount] = useState(0);
+  const [myReposted, setMyReposted] = useState(false);
+  const [reposting, setReposting] = useState(false);
+  const [reposters, setReposters] = useState<any[]>([]);
+
+  const loadReposts = async () => {
+    const { data } = await supabase.from("reposts").select("user_id").eq("post_id", postId);
+    if (!data) return;
+    setRepostCount(data.length);
+    if (user?.id) {
+      setMyReposted((data as any[]).some((r) => r.user_id === user.id));
+    }
+    // Load first 3 reposter names for label
+    if (data.length > 0) {
+      const ids = (data as any[]).slice(0, 3).map((r) => r.user_id);
+      const profs = await fetchProfiles(ids);
+      setReposters(ids.map((id: string) => profs[id]).filter(Boolean));
+    }
+  };
+
+  const handleRepost = async () => {
+    if (!user) { toast.error("Login first to repost"); return; }
+    if (reposting) return;
+    setReposting(true);
+    try {
+      if (myReposted) {
+        const { error } = await supabase.from("reposts").delete().eq("user_id", user.id).eq("post_id", postId);
+        if (error) throw error;
+        toast.success("Repost removed");
+        setMyReposted(false);
+        setRepostCount((c) => Math.max(0, c - 1));
+      } else {
+        const { error } = await supabase.from("reposts").insert({ user_id: user.id, post_id: postId });
+        if (error) throw error;
+        toast.success("Reposted! 🔁 E go show for your profile");
+        setMyReposted(true);
+        setRepostCount((c) => c + 1);
+      }
+      loadReposts();
+    } catch (e: any) {
+      if (e.message?.includes("reposts") || e.code === "42P01") {
+        toast.error("Repost table never create yet - run SQL for reposts first");
+      } else toast.error(e.message || "Repost failed");
+    } finally { setReposting(false); }
+  };
+
+  const handleShare = async () => {
+    if (!post) return;
+    const url = window.location.href;
+    const text = `🎓 AFUED COMMUNITY INVITE\n\n"${post.content.slice(0, 120)}"\n\n👉 Join AFUED gist, news & connect!\n📲 Open:\n`;
+    if (navigator.share) await navigator.share({ title: "AFUED Community", text, url });
+    else { await navigator.clipboard.writeText(text + url); toast.success("Link copied!"); }
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -22,11 +81,18 @@ function SinglePost() {
         setPost(data as Post);
         const profiles = await fetchProfiles([data.user_id]);
         setAuthor(profiles[data.user_id] || null);
+        // === ADDED: Real comment count ===
+        const { count } = await supabase.from("comments").select("id", { count: "exact", head: true }).eq("post_id", postId);
+        setCommentCount(count ?? 0);
       }
       setLoading(false);
     };
     load();
-  }, [postId]);
+    loadReposts();
+    // Live update when person repost
+    const ch = supabase.channel(`single-repost-${postId}`).on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `post_id=eq.${postId}` }, loadReposts).subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [postId, user?.id]);
 
   useEffect(() => {
     if (post) {
@@ -70,18 +136,39 @@ function SinglePost() {
 
         <img src="/Afued-logo.jpg" alt="AFUED Logo" className="mb-4 h-20 w-auto rounded-xl mx-auto shadow-md border-2 border-blue-100" />
 
-        <PostCard post={post} author={author || undefined} commentCount={0} onComments={() => {}} />
+        {/* === ADDED: Repost label like TikTok === */}
+        {(myReposted || repostCount > 0) && (
+          <div className="mb-2 flex items-center gap-1.5 rounded-xl bg-green-50 border border-green-200 px-3 py-2 text-xs font-bold text-green-700">
+            <Repeat2 className="h-4 w-4" />
+            {myReposted ? "You reposted this" : `${reposters[0]?.full_name || "Someone"} reposted this`}
+            {repostCount > 1 && <span className="font-normal text-green-600">• {repostCount} reposts • 💬 {commentCount} comments</span>}
+            {repostCount <= 1 && <span className="font-normal text-green-600">• 💬 {commentCount} comments</span>}
+          </div>
+        )}
+
+        <PostCard post={post} author={author || undefined} commentCount={commentCount} onComments={() => {}} />
+
+        {/* === ADDED: Big Repost + Share bar like TikTok === */}
+        <div className="mt-3 flex gap-2">
+          <button
+            onClick={handleRepost}
+            disabled={reposting}
+            className={`flex flex-1 items-center justify-center gap-2 rounded-full py-3 font-bold text-sm transition ${myReposted ? "bg-green-100 text-green-700 border border-green-300" : "bg-black text-white"}`}
+          >
+            <Repeat2 className="h-5 w-5" />
+            {reposting ? "Wait..." : myReposted ? `Reposted • ${repostCount}` : `Repost • ${repostCount}`}
+          </button>
+          <button onClick={handleShare} className="flex flex-1 items-center justify-center gap-2 rounded-full border py-3 font-bold bg-white text-sm">
+            <Share2 className="h-4 w-4" /> Share
+          </button>
+        </div>
+        {myReposted && <p className="mt-2 text-center text-xs font-semibold text-green-600">✅ E don show for your profile → Profile → Reposts tab</p>}
 
         <div className="mt-6 flex gap-2">
           <a href="/" className="flex-1 rounded-full bg-blue-600 py-3 text-center font-bold text-white">Open AFUED App</a>
-          <button onClick={async () => {
-            const url = window.location.href;
-            const text = `🎓 AFUED COMMUNITY INVITE\n\n"${post.content.slice(0, 120)}"\n\n👉 Join AFUED gist, news & connect!\n📲 Open:\n`;
-            if (navigator.share) await navigator.share({ title: "AFUED Community", text, url });
-            else { await navigator.clipboard.writeText(text + url); alert("Link copied!"); }
-          }} className="flex-1 rounded-full border py-3 font-bold bg-white">Share Again</button>
+          <button onClick={handleShare} className="flex-1 rounded-full border py-3 font-bold bg-white">Share Again</button>
         </div>
       </div>
     </AppShell>
   );
-      }
+    }
