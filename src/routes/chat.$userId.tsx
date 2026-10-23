@@ -8,7 +8,6 @@ export const Route = createFileRoute('/chat/$userId')({
   component: ChatPage,
 })
 
-// === FIX: Video wey show face quick, no black 59s video ===
 function ChatVideo({ src }: { src: string }) {
   const ref = useRef<HTMLVideoElement>(null)
   const [poster, setPoster] = useState<string | undefined>(undefined)
@@ -91,10 +90,8 @@ function ChatPage(){
     return ()=> {
       mounted = false
       cleanupRec()
-      // FIX: Remove only this chat channel, no removeAllChannels wey kill other chats
       try{ supabase.removeChannel(supabase.channel(`chat-${convIdRef.current}`)) }catch{}
     }
-    // eslint-disable-next-line
   },[otherUserId])
 
   useEffect(()=>{
@@ -120,7 +117,6 @@ function ChatPage(){
   }
 
   function subscribeToChat(cId:string){
-    // FIX: Don't remove all channels, only this one
     try{ supabase.removeChannel(supabase.channel(`chat-${cId}`)) }catch{}
     try{
       supabase.channel(`chat-${cId}`)
@@ -129,15 +125,12 @@ function ChatPage(){
           (payload)=>{
             const newMsg = payload.new as any
             setMessages(prev=>{
-              // 1. If we already have this real ID, no duplicate
               if(prev.some(m=>m.id===newMsg.id)) return prev
-              // 2. FIX: If na my own message wey I don show as temp, REPLACE temp, no delete all temps
               if(newMsg.sender_id === meRef.current?.id){
                 const tempIdx = prev.findIndex(m=> String(m.id).startsWith('temp-') && m.content===newMsg.content && m.type===newMsg.type)
                 if(tempIdx !== -1){
                   const copy=[...prev]; copy[tempIdx]=newMsg; return copy
                 }
-                // If no temp match, maybe I send from another device - add am
                 return [...prev, newMsg]
               }
               if((newMsg.deleted_for||[]).includes(meRef.current?.id)) return prev
@@ -187,7 +180,6 @@ function ChatPage(){
     setShowDeleteMenu(false)
   }
 
-  // === FIX: WHATSAPP INSTANT - Show now, replace temp with real, no flicker ===
   async function send(type='text', content=''){
     const msg = content || text
     if(!msg && type==='text') return
@@ -196,18 +188,14 @@ function ChatPage(){
     if(!user?.id) return
     const tempId = `temp-${Date.now()}-${Math.random().toString(36).slice(2,6)}`
     const tempMsg: any = { id: tempId, conversation_id: convId, sender_id: user?.id, type, content: msg, created_at: new Date().toISOString(), isUploading: false, pending: true }
-    // 1. SHOW INSTANTLY - no wait
     setMessages(prev=>[...prev, tempMsg])
     if(type==='text') setText('')
     try{
-      // 2. Save and get REAL row back
       const { data, error } = await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type, content: msg}).select().single()
       if(error) throw error
-      // 3. Replace temp with real - no duplicate, no delete
       if(data) setMessages(prev=> prev.map(m=> m.id===tempId ? { ...data, pending: false } : m))
     }catch(e){
       console.log(e)
-      // Show failed, let user tap to retry - no just disappear silently
       setMessages(prev=> prev.map(m=> m.id===tempId ? { ...m, failed: true, pending: false } : m))
     }
   }
@@ -237,14 +225,12 @@ function ChatPage(){
     try{
       setUploading(true); setProgress(0)
       const url = await uploadToBunny(fileToUpload, pendingType==='video' ? 'videos' : pendingType==='image' ? 'chat_images' : 'files', (p)=> setProgress(p))
-      // FIX: Replace temp with uploaded URL, no delete after 600ms
       setMessages(prev=>prev.map(m=>m.id===tempId ? {...m, content: url, isUploading: false} : m))
       const { data: {user} } = await supabase.auth.getUser()
       if(user?.id && convId){
         const { data } = await supabase.from('messages').insert({conversation_id: convId, sender_id: user?.id, type: pendingType, content: url}).select().single()
         if(data) setMessages(prev=> prev.map(m=> m.id===tempId ? { ...data, pending: false } : m))
         if(caption?.trim()){
-          // Send caption as separate message, but use instant send() so e appear quick
           await send('text', caption)
         }
       }
@@ -353,7 +339,6 @@ function ChatPage(){
                   {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} />}
                   {m.type==='video' && <ChatVideo src={m.content} />}
                   {(m as any).isUploading && <div style={{fontSize:10, marginTop:4}}>⏳ Uploading...</div>}
-                  {/* WhatsApp ticks */}
                   <div style={{ fontSize: 10, textAlign: 'right', marginTop: 3, opacity: 0.8, display: 'flex', justifyContent: 'flex-end', gap: 4, alignItems: 'center' }}>
                     <span>{new Date(m.created_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
                     {m.sender_id===me?.id && (
@@ -407,13 +392,13 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
   return (<div style={{display:'flex', alignItems:'center', gap:10, minWidth:180}}><button onClick={toggle} style={{width:36, height:36, borderRadius:'50%', border:'none', background: isMe ? '#0064d1' : '#0084ff', display:'flex', alignItems:'center', justifyContent:'center'}}>{playing ? <Pause size={16} color="white"/> : <Play size={16} color="white" style={{marginLeft:2}}/>}</button><div style={{flex:1}}><div style={{height:3, background: isMe ? 'rgba(255,255,255,0.4)' : '#e4e6eb', borderRadius:2}}><div style={{width:`${pct}%`, height:3, background: isMe ? 'white' : '#0084ff', borderRadius:2, transition:'width 0.1s'}}/></div><div style={{fontSize:10, marginTop:4, opacity:0.8}}>{dur ? `${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')}` : '0:00'} • 🔊</div></div></div>)
 }
 
-// === WHATSAPP EDITOR V6 - SAME AS BEFORE, + FIX: Redraw after Crop ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image(); image.crossOrigin = "anonymous"; image.src = imageSrc; await new Promise((res) => (image.onload = res))
   const canvas = document.createElement("canvas"); canvas.width = Math.max(1,pixelCrop.width); canvas.height = Math.max(1,pixelCrop.height)
   const ctx = canvas.getContext("2d")!; ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height)
   return canvas.toDataURL("image/jpeg", 0.9)
 }
+
 function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const canvasRef = useRef<any>(null); const videoRef = useRef<any>(null)
   const [tool, setTool] = useState<'pen'|'eraser'|'crop'|'text'>('pen'); const [color, setColor] = useState('#ffffff'); const [brushSize, setBrushSize] = useState(5)
@@ -426,7 +411,6 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const FILTERS = [{n:'Original', v:'none'}, {n:'Pop', v:'contrast(1.2) saturate(1.4)'}, {n:'B&W', v:'grayscale(1)'}, {n:'Cool', v:'hue-rotate(180deg) saturate(1.2)'}, {n:'Warm', v:'sepia(0.4) contrast(1.1)'}, {n:'Vivid', v:'saturate(1.8) contrast(1.15)'}]
   const [cropBox, setCropBox] = useState({ x: 8, y: 8, w: 84, h: 84 }); const [cropHandle, setCropHandle] = useState<string | null>(null); const cropStart = useRef<any>(null); const [cropRotate, setCropRotate] = useState(0); const [isBurning, setIsBurning] = useState(false)
   useEffect(()=>{ if(isVideo && videoRef.current){ if(tool==='pen' || tool==='eraser' || tool==='text' || tool==='crop') videoRef.current.pause(); else videoRef.current.play().catch(()=>{}) } },[tool, isVideo])
-  // FIX: Redraw on tool change - after Crop, canvas no go blank
   useEffect(()=>{ if(isVideo) return; const img = new Image(); img.crossOrigin = 'anonymous'; img.src = currentImage; img.onload = ()=>{ const canvas = canvasRef.current; if(!canvas) return; canvas.width = img.width; canvas.height = img.height; const ctx = canvas.getContext('2d'); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.drawImage(img, 0, 0) } },[currentImage, isVideo, tool])
   function getPos(e:any){ const el = isVideo ? videoRef.current : canvasRef.current; if(!el) return {x:0,y:0,clientX:0,clientY:0}; const rect = el.getBoundingClientRect(); const cx = e.clientX ?? e.touches?.[0]?.clientX; const cy = e.clientY ?? e.touches?.[0]?.clientY; return {x: cx - rect.left, y: cy - rect.top, clientX: cx, clientY: cy} }
   function startDragItem(e:any, type:string, index:number){ e.stopPropagation(); const p = getPos(e); const item = type==='text' ? texts[index] : emojis[index]; setDragItem({type, index, startX: p.clientX, startY: p.clientY, origX: item.x, origY: item.y}) }
@@ -448,7 +432,7 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   function endCropHandle(){ setCropHandle(null); cropStart.current = null }
   async function applyCrop(){ if(!isVideo){ const img = new Image(); img.crossOrigin='anonymous'; img.src = currentImage; await new Promise((res)=>(img.onload=res)); const pixelCrop = { x: (cropBox.x/100)*img.width, y: (cropBox.y/100)*img.height, width: (cropBox.w/100)*img.width, height: (cropBox.h/100)*img.height }; const cropped = await getCroppedImg(currentImage, pixelCrop); setCurrentImage(cropped) } setCropBox({x:8,y:8,w:84,h:84}); setCropRotate(0); setTool('pen') }
   function rotateCrop(){ setCropRotate(prev => (prev + 90) % 360); setCropBox(prev => ({ x: prev.x, y: prev.y, w: prev.h, h: prev.w })) }
-  async function burnVideoWithOverlays(): Promise<File | null> { return new Promise((resolve) => { const video = document.createElement('video'); video.src = currentImage; video.muted = true; video.playsInline = true; video.onloadedmetadata = async () => { const canvas = document.createElement('canvas'); canvas.width = video.videoWidth || 720; canvas.height = video.videoHeight || 1280; const ctx = canvas.getContext('2d')!; const dispVideo = videoRef.current; const rect = dispVideo ? dispVideo.getBoundingClientRect() : { width: canvas.width, height: canvas.height }; const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; // @ts-ignore const stream = canvas.captureStream(30); let rec: any = null; try { rec = new MediaRecorder(stream, { mimeType: 'video/webm' }) } catch { rec = new MediaRecorder(stream) } const chunks: any[] = []; rec.ondataavailable = (e:any) => { if (e.data.size > 0) chunks.push(e.data) }; rec.onstop = () => { const blob = new Blob(chunks, { type: 'video/webm' }); const file = new File([blob], `edited-video-${Date.now()}.webm`, { type: 'video/webm' }); resolve(file) }; const drawFrame = () => { if (video.paused || video.ended) return; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); drawLines.forEach((line: any) => { ctx.strokeStyle = line.color; ctx.lineWidth = line.size * 2 * scaleX; ctx.lineCap = 'round'; ctx.beginPath(); line.points.forEach((p: any, i: number) => { const X = p.x * scaleX, Y = p.y * scaleY; if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y) }); ctx.stroke() }); texts.forEach((t: any) => { ctx.font = `bold ${42 * scaleX}px Arial`; ctx.fillStyle = t.color; ctx.strokeStyle = 'black'; ctx.lineWidth = 3; ctx.strokeText(t.text, t.x * scaleX, t.y * scaleY); ctx.fillText(t.text, t.x * scaleX, t.y * scaleY) }); emojis.forEach((e: any) => { ctx.font = `${80 * scaleX}px Arial`; ctx.fillText(e.emoji, e.x * scaleX, e.y * scaleY) }); requestAnimationFrame(drawFrame) }; video.onplay = () => { rec.start(); drawFrame() }; video.onended = () => { setTimeout(() => { try { rec.stop() } catch {} }, 200) }; video.currentTime = 0; video.play().catch(() => resolve(null)); setTimeout(() => { if (rec.state !== 'inactive') { try { rec.stop() } catch {} } }, ((video.duration || 5) * 1000) + 800) }; video.onerror = () => resolve(null) }) }
+  async function burnVideoWithOverlays(): Promise<File | null> { return new Promise((resolve) => { const video = document.createElement('video'); video.src = currentImage; video.muted = true; video.playsInline = true; video.onloadedmetadata = async () => { const canvas = document.createElement('canvas'); canvas.width = video.videoWidth || 720; canvas.height = video.videoHeight || 1280; const ctx = canvas.getContext('2d')!; const dispVideo = videoRef.current; const rect = dispVideo ? dispVideo.getBoundingClientRect() : { width: canvas.width, height: canvas.height }; const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; const stream = canvas.captureStream(30); let rec: any = null; try { rec = new MediaRecorder(stream, { mimeType: 'video/webm' }) } catch { rec = new MediaRecorder(stream) } const chunks: any[] = []; rec.ondataavailable = (e:any) => { if (e.data.size > 0) chunks.push(e.data) }; rec.onstop = () => { const blob = new Blob(chunks, { type: 'video/webm' }); const file = new File([blob], `edited-video-${Date.now()}.webm`, { type: 'video/webm' }); resolve(file) }; const drawFrame = () => { if (video.paused || video.ended) return; ctx.drawImage(video, 0, 0, canvas.width, canvas.height); drawLines.forEach((line: any) => { ctx.strokeStyle = line.color; ctx.lineWidth = line.size * 2 * scaleX; ctx.lineCap = 'round'; ctx.beginPath(); line.points.forEach((p: any, i: number) => { const X = p.x * scaleX, Y = p.y * scaleY; if (i === 0) ctx.moveTo(X, Y); else ctx.lineTo(X, Y) }); ctx.stroke() }); texts.forEach((t: any) => { ctx.font = `bold ${42 * scaleX}px Arial`; ctx.fillStyle = t.color; ctx.strokeStyle = 'black'; ctx.lineWidth = 3; ctx.strokeText(t.text, t.x * scaleX, t.y * scaleY); ctx.fillText(t.text, t.x * scaleX, t.y * scaleY) }); emojis.forEach((e: any) => { ctx.font = `${80 * scaleX}px Arial`; ctx.fillText(e.emoji, e.x * scaleX, e.y * scaleY) }); requestAnimationFrame(drawFrame) }; video.onplay = () => { rec.start(); drawFrame() }; video.onended = () => { setTimeout(() => { try { rec.stop() } catch {} }, 200) }; video.currentTime = 0; video.play().catch(() => resolve(null)); setTimeout(() => { if (rec.state !== 'inactive') { try { rec.stop() } catch {} } }, ((video.duration || 5) * 1000) + 800) }; video.onerror = () => resolve(null) }) }
   async function handleSend(){ if(isVideo){ if(texts.length===0 && emojis.length===0 && drawLines.length===0){ onSend(imageUrl, caption); return } setIsBurning(true); const burnedFile = await burnVideoWithOverlays(); setIsBurning(false); if(burnedFile){ onSend(URL.createObjectURL(burnedFile), caption, burnedFile) } else { onSend(imageUrl, caption) } return } const canvas = canvasRef.current; if(!canvas){ onSend(currentImage, caption); return } const ctx = canvas.getContext('2d'); const img = new Image(); img.crossOrigin='anonymous'; img.src=currentImage; await new Promise((res)=>{ img.onload=res; img.onerror=res }); ctx.clearRect(0,0,canvas.width,canvas.height); ctx.filter = filter; ctx.drawImage(img,0,0); ctx.filter = 'none'; const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / (rect.width || canvas.width); const scaleY = canvas.height / (rect.height || canvas.height); drawLines.forEach((line:any)=>{ ctx.strokeStyle=line.color; ctx.lineWidth=line.size*2*scaleX; ctx.lineCap='round'; ctx.beginPath(); line.points.forEach((p:any,i:number)=>{ const X=p.x*scaleX, Y=p.y*scaleY; if(i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y) }); ctx.stroke() }); texts.forEach((t:any)=>{ ctx.font=`bold ${42*scaleX}px Arial`; ctx.fillStyle=t.color; ctx.strokeStyle='black'; ctx.lineWidth=3; ctx.strokeText(t.text, t.x*scaleX, t.y*scaleY); ctx.fillText(t.text, t.x*scaleX, t.y*scaleY) }); emojis.forEach((e:any)=>{ ctx.font=`${80*scaleX}px Arial`; ctx.fillText(e.emoji, e.x*scaleX, e.y*scaleY) }); onSend(canvas.toDataURL('image/jpeg',0.92), caption) }
   return (
     <div style={{position:'fixed', inset:0, background:'black', zIndex:1000, display:'flex', flexDirection:'column'}}>
@@ -461,4 +445,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   )
-      }
+            }
