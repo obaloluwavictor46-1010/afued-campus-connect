@@ -1,17 +1,21 @@
 import { useEffect, useState, useRef } from "react";
 import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
-import { Heart, MessageCircle, Play, Pause, Music2, Download } from "lucide-react";
+import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2 } from "lucide-react";
+import { toast } from "sonner";
 import { Avatar } from "./AppShell";
-import { shortFaculty, type Profile } from "@/lib/supabase";
+import { shortFaculty, supabase, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
 import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
+import { useAuth } from "@/lib/auth";
 
-// VIDEO - MUST PAUSE WHEN COMOT + WITH WATERMARK DOWNLOAD
+// VIDEO - MUST PAUSE WHEN COMOT + PAUSE OTHER VIDEOS WHEN YOU PRESS THIS ONE + WITH WATERMARK DOWNLOAD
 function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [dlProgress, setDlProgress] = useState(0)
   const [isDownloading, setIsDownloading] = useState(false)
+  const [hasError, setHasError] = useState(false)
+  const [retryKey, setRetryKey] = useState(0)
 
   useEffect(() => {
     const video = videoRef.current;
@@ -22,12 +26,54 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     );
     obs.observe(video);
     return () => obs.disconnect();
-  }, [src]);
+  }, [src, retryKey]);
+
+  // === FIX: When this video start play, pause every other video + music for whole app ===
+  const handlePlay = () => {
+    document.querySelectorAll('video, audio').forEach((el: any) => {
+      if (el !== videoRef.current) { try { el.pause(); } catch {} }
+    });
+    // Kill Bunny iframes too - set them to blank then restore on tap
+    document.querySelectorAll('iframe').forEach((f: any) => {
+      if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
+        try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
+      }
+    });
+  };
+
+  // === FIX 4: If video be like e don delete / fail, resurrect am on tap ===
+  const handleError = () => {
+    setHasError(true);
+  };
+  const handleRetry = () => {
+    setHasError(false);
+    setRetryKey(k => k + 1);
+    setTimeout(() => { try { videoRef.current?.load(); } catch {} }, 100);
+  };
 
   return (
     <div className="relative w-full bg-black group">
-      <video ref={videoRef} src={src} controls playsInline preload="metadata" className="w-full max-h-[480px] bg-black" />
+      <video
+        key={retryKey}
+        ref={videoRef}
+        src={src}
+        controls
+        playsInline
+        preload="metadata"
+        onPlay={handlePlay}
+        onError={handleError}
+        onClick={() => { if (hasError) handleRetry(); }}
+        className="w-full max-h-[480px] bg-black"
+      />
       
+      {hasError && (
+        <button onClick={handleRetry} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
+          <span className="text-3xl">↻</span>
+          <span>Video no load? Tap to resurrect</span>
+          <span className="text-xs text-white/70">E never delete, na network</span>
+        </button>
+      )}
+
       {/* WATERMARK PREVIEW - Like TikTok */}
       <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
@@ -62,7 +108,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   )
 }
 
-// IFRAME - FORCE KILL SOUND WHEN COMOT + SIMPLE DOWNLOAD
+// IFRAME - FORCE KILL SOUND WHEN COMOT + SIMPLE DOWNLOAD + PAUSE OTHERS
 function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -93,8 +139,15 @@ function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: st
     return () => obs.disconnect();
   }, []);
 
+  // === FIX: When you tap this iframe video, pause every other video/music ===
+  const handleWrapClick = () => {
+    document.querySelectorAll('video, audio').forEach((el: any) => {
+      try { (el as HTMLMediaElement).pause(); } catch {}
+    });
+  };
+
   return (
-    <div ref={wrapRef} className="relative w-full bg-black" style={{ height: '380px' }}>
+    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-black" style={{ height: '380px' }}>
       <iframe ref={iframeRef} src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen />
       
       <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
@@ -122,13 +175,61 @@ function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: st
 }
 
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
+  const { user } = useAuth();
   const key = `afued-like-${post.id}`;
   const [liked, setLiked] = useState(false);
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const cardRef = useRef<HTMLElement>(null);
-  
+
+  // === REPOST LIKE TIKTOK - inside PostCard ===
+  const [repostCount, setRepostCount] = useState(0);
+  const [myReposted, setMyReposted] = useState(false);
+  const [reposting, setReposting] = useState(false);
+
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
+
+  // Load repost count + if I don repost this post
+  useEffect(() => {
+    let cancelled = false;
+    const loadRepost = async () => {
+      const { data, error } = await supabase.from("reposts").select("id, user_id").eq("post_id", post.id);
+      if (cancelled || error) return;
+      setRepostCount((data || []).length);
+      if (user?.id) {
+        setMyReposted((data || []).some((r: any) => r.user_id === user.id));
+      }
+    };
+    loadRepost();
+    // Live update when person repost
+    const ch = supabase.channel(`repost-${post.id}`).on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `post_id=eq.${post.id}` }, loadRepost).subscribe();
+    return () => { cancelled = true; supabase.removeChannel(ch); };
+  }, [post.id, user?.id]);
+
+  const handleRepost = async () => {
+    if (!user) { toast.error("Login first"); return; }
+    if (reposting) return;
+    setReposting(true);
+    try {
+      if (myReposted) {
+        const { error } = await supabase.from("reposts").delete().eq("user_id", user.id).eq("post_id", post.id);
+        if (error) throw error;
+        toast.success("Repost removed");
+        setMyReposted(false);
+        setRepostCount(c => Math.max(0, c - 1));
+      } else {
+        const { error } = await supabase.from("reposts").insert({ user_id: user.id, post_id: post.id });
+        if (error) throw error;
+        toast.success("Reposted! 🔁 E go show for your profile");
+        setMyReposted(true);
+        setRepostCount(c => c + 1);
+      }
+    } catch (e: any) {
+      if (e.message?.includes("reposts") || e.code === "42P01") {
+        toast.error("Repost table never create yet - run SQL for reposts first");
+      } else toast.error(e.message || "Repost failed");
+    } finally { setReposting(false); }
+  };
 
   useEffect(() => {
     const card = cardRef.current;
@@ -176,6 +277,12 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (!audioRef.current) return;
     document.querySelectorAll('audio, video').forEach(el => {
       if (el !== audioRef.current) (el as HTMLMediaElement).pause();
+    });
+    // Kill Bunny iframes when music play
+    document.querySelectorAll('iframe').forEach((f: any) => {
+      if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
+        try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
+      }
     });
     if (playing) {
       audioRef.current.pause();
@@ -241,8 +348,14 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         <button onClick={onComments} className="flex items-center gap-1.5 text-sm font-medium">
           <MessageCircle className="h-6 w-6" /> {commentCount}
         </button>
+        {/* === REPOST LIKE TIKTOK - Join Like / Comment === */}
+        <button onClick={handleRepost} disabled={reposting} className={`flex items-center gap-1.5 text-sm font-medium ${myReposted ? "text-green-600" : ""}`}>
+          <Repeat2 className={`h-6 w-6 transition ${myReposted ? "text-green-600 scale-110" : ""}`} />
+          {repostCount}
+        </button>
+        {myReposted && <span className="text-[11px] font-semibold text-green-600">Reposted</span>}
         {musicUrl && <span className="ml-auto flex items-center gap-1 text-[11px] text-primary font-bold"><Music2 className="h-3 w-3" /> MP3</span>}
       </div>
     </article>
   );
-            }
+        }
