@@ -135,12 +135,11 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
 
   function openEditorForFirstImage() {
     const img = picker.files.find((f: any) => f.type?.startsWith('image/') || f.type?.startsWith('video/'));
-    if (!img) return;
+    if (!img) { toast.error("Pick picture / video first"); return; }
     setEditorFile(img);
     setEditorUrl(URL.createObjectURL(img));
   }
 
-  // FIXED: Video burned file, caption = ONLY caption box, NOT screen text
   function onEditorSend(editedDataUrl: string, captionFromEditor: string, editedFile?: File | null) {
     if (captionFromEditor) setF(prev => ({ ...prev, content: prev.content ? prev.content + " " + captionFromEditor : captionFromEditor }));
     if (editorFile?.type?.startsWith('video/')) {
@@ -153,28 +152,35 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
       setEditorUrl(null); setEditorFile(null);
       return;
     }
+    if (!editedDataUrl) { setEditorUrl(null); setEditorFile(null); return; }
     fetch(editedDataUrl).then(r => r.blob()).then(blob => {
       const newFile = new File([blob], `edited-${Date.now()}.jpg`, { type: 'image/jpeg' });
       setEditedFiles([newFile]);
       toast.success("Edited! Press Post announcement now 🎨");
-    });
+    }).catch(()=>{ toast.error("Edit failed, try again"); });
     setEditorUrl(null); setEditorFile(null);
   }
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!user) return;
+    if (!user) { toast.error("Login first"); return; }
+    if (!f.title.trim()) { toast.error("Put Title first"); return; }
     setBusy(true);
     try {
       const filesToUpload = editedFiles.length > 0 ? editedFiles : picker.files;
       const urls = filesToUpload.length ? await uploadMany(filesToUpload, user.id, setPct) : [];
       await insertWithMedia("announcements", { author_id: user.id, title: f.title.trim(), content: f.content.trim() }, urls);
       setF({ title: "", content: "" }); picker.clear(); setEditedFiles([]); setShowEditorBtn(false);
-      toast.success("Announcement posted"); onDone(); onClose();
-    } catch (err) { toast.error((err as Error).message); } finally { setBusy(false); setPct(null); }
+      toast.success("Announcement posted ✅"); onDone(); onClose();
+    } catch (err: any) { console.log(err); toast.error(err?.message || "Post failed - check internet / file size"); } finally { setBusy(false); setPct(null); }
   };
+
+  // FIX 1: When editor open, HIDE Dialog completely - Dialog overlay dey block editor taps
+  if (editorUrl) {
+    return <WhatsAppEditor imageUrl={editorUrl} isVideo={editorFile?.type?.startsWith('video/')} onCancel={() => { setEditorUrl(null); setEditorFile(null); }} onSend={onEditorSend} />;
+  }
+
   return (
-    <>
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
         <DialogHeader><DialogTitle>New announcement</DialogTitle></DialogHeader>
@@ -204,22 +210,17 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
         </form>
       </DialogContent>
     </Dialog>
-    {editorUrl && (
-      <WhatsAppEditor imageUrl={editorUrl} isVideo={editorFile?.type?.startsWith('video/')} onCancel={() => { setEditorUrl(null); setEditorFile(null); }} onSend={onEditorSend} />
-    )}
-    </>
   );
 }
 
-// === WHATSAPP EDITOR V6 - MODERN - NO MUSIC, NO STICKER - L-CORNER CROP - TAP TO EDIT - VIDEO BURN ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image();
   image.crossOrigin = "anonymous";
   image.src = imageSrc;
   await new Promise((res) => (image.onload = res));
   const canvas = document.createElement("canvas");
-  canvas.width = pixelCrop.width;
-  canvas.height = pixelCrop.height;
+  canvas.width = Math.max(1, Math.floor(pixelCrop.width));
+  canvas.height = Math.max(1, Math.floor(pixelCrop.height));
   const ctx = canvas.getContext("2d")!;
   ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height);
   return canvas.toDataURL("image/jpeg", 0.9);
@@ -252,6 +253,7 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const cropStart = useRef<any>(null);
   const [cropRotate, setCropRotate] = useState(0);
   const [isBurning, setIsBurning] = useState(false);
+  const [imgReady, setImgReady] = useState(false);
 
   useEffect(()=>{
     if(isVideo && videoRef.current){
@@ -260,21 +262,25 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     }
   },[tool, isVideo]);
 
+  // FIX 2: Redraw picture EVERY time tool changes (after Crop, canvas remounts empty)
   useEffect(()=>{
     if(isVideo) return;
+    setImgReady(false);
     const img = new Image();
     img.crossOrigin = 'anonymous';
     img.src = currentImage;
     img.onload = ()=>{
       const canvas = canvasRef.current;
-      if(!canvas) return;
+      if(!canvas) { setTimeout(()=>{ const c2 = canvasRef.current; if(c2){ c2.width = img.width; c2.height = img.height; const ctx2 = c2.getContext('2d'); ctx2.clearRect(0,0,c2.width,c2.height); ctx2.drawImage(img, 0, 0); } }, 50); return; }
       canvas.width = img.width;
       canvas.height = img.height;
       const ctx = canvas.getContext('2d');
       ctx.clearRect(0,0,canvas.width,canvas.height);
       ctx.drawImage(img, 0, 0);
+      setImgReady(true);
     };
-  },[currentImage, isVideo]);
+    img.onerror = ()=> setImgReady(true);
+  },[currentImage, isVideo, tool]);
 
   function getPos(e:any){
     const el = isVideo ? videoRef.current : canvasRef.current;
@@ -495,29 +501,33 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       else { onSend(imageUrl, caption); }
       return;
     }
+    // FIX 3: If canvas never load, send original picture, no crash
     const canvas = canvasRef.current;
-    const ctx = canvas.getContext('2d');
-    const img = new Image(); img.crossOrigin='anonymous'; img.src=currentImage;
-    await new Promise((res)=>(img.onload=res));
-    ctx.clearRect(0,0,canvas.width,canvas.height);
-    ctx.filter = filter;
-    ctx.drawImage(img,0,0);
-    ctx.filter = 'none';
-    const rect = canvas.getBoundingClientRect();
-    const scaleX = canvas.width / rect.width;
-    const scaleY = canvas.height / rect.height;
-    drawLines.forEach((line:any)=>{
-      ctx.strokeStyle=line.color; ctx.lineWidth=line.size*2*scaleX; ctx.lineCap='round'; ctx.beginPath();
-      line.points.forEach((p:any,i:number)=>{ const X=p.x*scaleX, Y=p.y*scaleY; if(i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y); });
-      ctx.stroke();
-    });
-    texts.forEach((t:any)=>{ ctx.font=`bold ${42*scaleX}px Arial`; ctx.fillStyle=t.color; ctx.strokeStyle='black'; ctx.lineWidth=3; ctx.strokeText(t.text, t.x*scaleX, t.y*scaleY); ctx.fillText(t.text, t.x*scaleX, t.y*scaleY); });
-    emojis.forEach((e:any)=>{ ctx.font=`${80*scaleX}px Arial`; ctx.fillText(e.emoji, e.x*scaleX, e.y*scaleY); });
-    onSend(canvas.toDataURL('image/jpeg',0.92), caption);
+    if(!canvas || !canvas.width){ onSend(currentImage, caption); return; }
+    try{
+      const ctx = canvas.getContext('2d');
+      const img = new Image(); img.crossOrigin='anonymous'; img.src=currentImage;
+      await new Promise((res)=>{ img.onload=res; img.onerror=res; });
+      ctx.clearRect(0,0,canvas.width,canvas.height);
+      ctx.filter = filter;
+      ctx.drawImage(img,0,0);
+      ctx.filter = 'none';
+      const rect = canvas.getBoundingClientRect();
+      const scaleX = canvas.width / (rect.width || canvas.width);
+      const scaleY = canvas.height / (rect.height || canvas.height);
+      drawLines.forEach((line:any)=>{
+        ctx.strokeStyle=line.color; ctx.lineWidth=line.size*2*scaleX; ctx.lineCap='round'; ctx.beginPath();
+        line.points.forEach((p:any,i:number)=>{ const X=p.x*scaleX, Y=p.y*scaleY; if(i===0) ctx.moveTo(X,Y); else ctx.lineTo(X,Y); });
+        ctx.stroke();
+      });
+      texts.forEach((t:any)=>{ ctx.font=`bold ${42*scaleX}px Arial`; ctx.fillStyle=t.color; ctx.strokeStyle='black'; ctx.lineWidth=3; ctx.strokeText(t.text, t.x*scaleX, t.y*scaleY); ctx.fillText(t.text, t.x*scaleX, t.y*scaleY); });
+      emojis.forEach((e:any)=>{ ctx.font=`${80*scaleX}px Arial`; ctx.fillText(e.emoji, e.x*scaleX, e.y*scaleY); });
+      onSend(canvas.toDataURL('image/jpeg',0.92), caption);
+    }catch(e){ onSend(currentImage, caption); }
   }
 
   return (
-    <div style={{position:'fixed', inset:0, background:'black', zIndex:1000, display:'flex', flexDirection:'column'}}>
+    <div style={{position:'fixed', inset:0, background:'black', zIndex:9999, display:'flex', flexDirection:'column'}}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px'}}>
         <button onClick={onCancel} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:22, width:36, height:36, borderRadius:'50%'}}>✕</button>
         <div style={{display:'flex', gap:10, alignItems:'center'}}>
@@ -635,6 +645,7 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
         <button onClick={handleSend} disabled={isBurning} style={{width:52, height:52, borderRadius:'50%', background:'#00a884', color:'white', border:'none', fontSize:22, flexShrink:0, opacity: isBurning ? 0.6 : 1}}>{isBurning ? '⏳' : '➤'}</button>
       </div>
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
+      {!imgReady && !isVideo && <p style={{textAlign:'center', color:'#aaa', fontSize:11, background:'#000', padding:'4px'}}>Loading picture... wait small</p>}
     </div>
   );
-  }
+      }
