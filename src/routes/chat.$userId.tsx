@@ -47,6 +47,7 @@ function ChatPage(){
   const { userId: otherUserId } = Route.useParams()
   const [me, setMe] = useState<any>(null)
   const [other, setOther] = useState<any>(null)
+  const [myProfile, setMyProfile] = useState<any>(null)
   const [messages, setMessages] = useState<any[]>([])
   const [text, setText] = useState('')
   const [convId, setConvId] = useState<string>('')
@@ -74,36 +75,47 @@ function ChatPage(){
   convIdRef.current = convId
   meRef.current = me
 
-  // --- CHAT REQUEST GATE ---
-  const [gate, setGate] = useState<'loading'|'none'|'pending_out'|'pending_in'|'declined'|'declined_in'|'allowed'>('loading')
+  const [gate, setGate] = useState<'loading'|'none'|'pending_out'|'pending_in'|'declined'|'declined_in'|'allowed'>('allowed')
   const [gateReqId, setGateReqId] = useState<string | null>(null)
   const [gateBusy, setGateBusy] = useState(false)
 
+  const [isFollowing, setIsFollowing] = useState(false)
+  async function checkFollow(myId: string){
+    try{
+      const { data } = await supabase.from('follows').select('id').eq('follower_id', myId).eq('following_id', otherUserId).maybeSingle()
+      setIsFollowing(!!data)
+    }catch{ setIsFollowing(false) }
+  }
+  async function toggleFollow(){
+    if(!me?.id) return
+    try{
+      if(isFollowing){
+        await supabase.from('follows').delete().eq('follower_id', me.id).eq('following_id', otherUserId)
+        setIsFollowing(false)
+      } else {
+        await supabase.from('follows').insert({ follower_id: me.id, following_id: otherUserId })
+        setIsFollowing(true)
+      }
+    }catch(e:any){ alert(e.message) }
+  }
+
   async function checkGate(myId: string){
     try{
-      // 1. If dem don chat before (old chats), allow straight - no request needed
+      const { data: req } = await supabase.from('chat_requests').select('*').or(`and(sender_id.eq.${myId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${myId})`).order('created_at',{ascending:false}).limit(1).maybeSingle()
+      if(req){
+        setGateReqId(req.id)
+        if(req.status === 'accepted'){ setGate('allowed'); return }
+        if(req.status === 'pending'){ setGate(req.sender_id === myId ? 'pending_out' : 'pending_in'); return }
+        if(req.status === 'declined'){ setGate(req.sender_id === myId ? 'declined' : 'declined_in'); return }
+      }
       const { data: conv } = await supabase.from('conversations').select('id').or(`and(participant1.eq.${myId},participant2.eq.${otherUserId}),and(participant1.eq.${otherUserId},participant2.eq.${myId})`).maybeSingle()
       if(conv){
-        const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('conversation_id', conv.id)
-        if((count||0) > 0){ setGate('allowed'); initChat({ id: myId }); return }
+        const { data: msgs } = await supabase.from('messages').select('id').eq('conversation_id', conv.id).limit(1)
+        if(msgs && msgs.length > 0){ setGate('allowed'); return }
       }
-      // 2. Check request
-      const { data: req } = await supabase.from('chat_requests').select('*').or(`and(sender_id.eq.${myId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${myId})`).order('created_at',{ascending:false}).limit(1).maybeSingle()
       if(!req){ setGate('none'); return }
-      setGateReqId(req.id)
-      if(req.status === 'accepted'){ setGate('allowed'); initChat({ id: myId }); return }
-      if(req.status === 'pending'){
-        if(req.sender_id === myId) setGate('pending_out')
-        else setGate('pending_in')
-        return
-      }
-      if(req.status === 'declined'){
-        if(req.sender_id === myId) setGate('declined')
-        else setGate('declined_in')
-        return
-      }
-      setGate('none')
-    }catch(e){ console.log(e); setGate('none') }
+      setGate('allowed')
+    }catch(e){ console.log(e); setGate('allowed') }
   }
 
   async function sendRequest(){
@@ -142,7 +154,13 @@ function ChatPage(){
         setMe(user); meRef.current = user
         const {data} = await supabase.from('profiles').select('*').eq('id', otherUserId).maybeSingle()
         if(mounted) setOther(data)
-        if(user) checkGate(user.id)
+        const {data: myP} = await supabase.from('profiles').select('*').eq('id', user?.id).maybeSingle()
+        if(mounted) setMyProfile(myP)
+        if(user){
+          initChat(user)
+          checkGate(user.id)
+          checkFollow(user.id)
+        }
       }catch(e){ console.log(e) }
     }
     boot()
@@ -153,7 +171,6 @@ function ChatPage(){
     }
   },[otherUserId])
 
-  // Live update: if other person Accept, open chat automatically
   useEffect(()=>{
     if(!me?.id) return
     const ch = supabase.channel(`gate-${me.id}-${otherUserId}`)
@@ -399,13 +416,14 @@ function ChatPage(){
           <img src={other?.avatar_url||`https://ui-avatars.com/api/?name=${other?.full_name||'User'}&background=0866ff&color=fff`} style={{width:38,height:38,borderRadius:19, objectFit:'cover'}}/>
           <div>
             <b style={{fontSize:15, display:'flex', alignItems:'center', gap:4}}>{other?.full_name||'Chat'} <span style={{background:'#1877f2', color:'white', borderRadius:'50%', fontSize:9, width:12, height:12, display:'flex', alignItems:'center', justifyContent:'center'}}>✓</span></b>
-            <div style={{fontSize:11, color:'#65676b'}}>Tap to view • Follow • Posts</div>
+            <div style={{fontSize:11, color:'#65676b', display:'flex', gap:6, alignItems:'center'}}>
+              <span>Tap to view • Posts</span>
+              <span onClick={(e)=>{e.preventDefault(); e.stopPropagation(); toggleFollow()}} style={{background: isFollowing ? '#e7f3ff' : '#0084ff', color: isFollowing ? '#0084ff' : 'white', padding:'2px 8px', borderRadius:10, fontWeight:'700', cursor:'pointer'}}>{isFollowing ? '✓ Following' : '+ Follow'}</span>
+            </div>
           </div>
         </Link>
         <div style={{display:'flex', gap:12, fontSize:18}}>📞 🎥</div>
       </div>
-
-      {gate === 'loading' && (<div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center'}}>Loading...</div>)}
 
       {gate === 'none' && (
         <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
@@ -421,7 +439,6 @@ function ChatPage(){
           <div style={{fontSize:48}}>⏳</div>
           <h3 style={{margin:'16px 0 6px'}}>Request Sent</h3>
           <p style={{color:'#65676b', fontSize:14, lineHeight:'20px'}}>Wait for {other?.full_name||'them'} to Allow.<br/>You no fit send message until dem accept.<br/>Chat go open automatically once dem Allow.</p>
-          <p style={{fontSize:12, color:'#999', marginTop:12}}>You go see notification for Chats once dem accept.</p>
         </div>
       )}
 
@@ -459,13 +476,13 @@ function ChatPage(){
         {messages.map(m=>(
           <div key={m.id} style={{display:'flex', justifyContent: m.sender_id===me?.id?'flex-end':'flex-start', margin:'4px 0'}}>
             <div onMouseDown={()=>onPressStart(m)} onMouseUp={onPressEnd} onMouseLeave={onPressEnd} onTouchStart={()=>onPressStart(m)} onTouchEnd={onPressEnd}
-              style={{ maxWidth:'76%', padding:'8px 10px', borderRadius: m.sender_id===me?.id ? '18px 18px 0 18px' : '18px 18px 18px 0', background: m.sender_id===me?.id ? '#0084ff' : 'white', color: m.sender_id===me?.id ? 'white' : '#111b21', boxShadow:'0 1px 0.5px rgba(0,0,0,0.13)', opacity: (m as any).isUploading ? 0.7 : 1, userSelect:'none', WebkitUserSelect:'none' as any, touchAction:'manipulation' }}>
+              style={{ maxWidth:'82%', padding: m.type==='voice' ? '8px 10px' : '8px 10px', borderRadius: m.sender_id===me?.id ? '18px 18px 0 18px' : '18px 18px 18px 0', background: m.type==='voice' ? (m.sender_id===me?.id ? '#005c4b' : '#202c33') : (m.sender_id===me?.id ? '#0084ff' : 'white'), color: m.type==='voice' ? 'white' : (m.sender_id===me?.id ? 'white' : '#111b21'), boxShadow:'0 1px 0.5px rgba(0,0,0,0.13)', opacity: (m as any).isUploading ? 0.7 : 1, userSelect:'none', WebkitUserSelect:'none' as any, touchAction:'manipulation' }}>
               {m.deleted_for_everyone ? (<i style={{fontSize:13, opacity:0.7}}>🚫 This message was deleted</i>) : (
                 <>
                   {m.type==='text' && <span style={{fontSize:15, lineHeight:'19px', wordBreak:'break-word'}}>{m.content}</span>}
                   {m.type==='image' && <img src={m.content} style={{width:220, borderRadius:12, display:'block', maxHeight:320, objectFit:'cover'}} loading="lazy"/>}
                   {m.type==='file' && <a href={m.content} target="_blank" rel="noreferrer" style={{color: m.sender_id===me?.id?'white':'#0084ff', fontSize:14, textDecoration:'none'}}>📎 Open File</a>}
-                  {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} />}
+                  {m.type==='voice' && <VoiceBubble url={m.content} isMe={m.sender_id===me?.id} avatarUrl={m.sender_id===me?.id ? (myProfile?.avatar_url || `https://ui-avatars.com/api/?name=Me&background=0084ff&color=fff`) : other?.avatar_url} />}
                   {m.type==='video' && <ChatVideo src={m.content} />}
                   {(m as any).isUploading && <div style={{fontSize:10, marginTop:4}}>⏳ Uploading...</div>}
                   <div style={{ fontSize: 10, textAlign: 'right', marginTop: 3, opacity: 0.8, display: 'flex', justifyContent: 'flex-end', gap: 4, alignItems: 'center' }}>
@@ -502,24 +519,58 @@ function ChatPage(){
   )
 }
 
-function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
+function VoiceBubble({ url, isMe, avatarUrl }: { url: string; isMe: boolean; avatarUrl?: string }){
   const [playing, setPlaying] = useState(false)
   const [pct, setPct] = useState(0)
+  const [cur, setCur] = useState(0)
   const audioRef = useRef<HTMLAudioElement|null>(null)
   const [dur, setDur] = useState(0)
+  const bars = useRef<number[]>(Array.from({length: 32}, (_,i)=>{
+    const center = 16
+    const dist = Math.abs(i - center) / center
+    const base = 22 - dist * 12
+    return Math.max(6, base + Math.abs(Math.sin(i*1.7)*10) + (i%3)*3)
+  }))
   const toggle = ()=>{
     try{
       if(!audioRef.current){
         const a = new Audio(url); audioRef.current = a
         a.onloadedmetadata = ()=> setDur(a.duration||0)
-        a.ontimeupdate = ()=> { if(a.duration) setPct((a.currentTime / a.duration)*100) }
-        a.onended = ()=> setPlaying(false); a.onpause = ()=> setPlaying(false)
+        a.ontimeupdate = ()=> { if(a.duration){ setPct((a.currentTime / a.duration)*100); setCur(a.currentTime) } }
+        a.onended = ()=> { setPlaying(false); setPct(0); setCur(0) }
+        a.onpause = ()=> setPlaying(false)
       }
       if(playing){ audioRef.current?.pause(); setPlaying(false) } else { audioRef.current?.play().catch(()=>{}); setPlaying(true) }
     }catch(e){ console.log(e) }
   }
   useEffect(()=>{ return ()=>{ try{ audioRef.current?.pause() }catch{} } },[])
-  return (<div style={{display:'flex', alignItems:'center', gap:10, minWidth:180}}><button onClick={toggle} style={{width:36, height:36, borderRadius:'50%', border:'none', background: isMe ? '#0064d1' : '#0084ff', display:'flex', alignItems:'center', justifyContent:'center'}}>{playing ? <Pause size={16} color="white"/> : <Play size={16} color="white" style={{marginLeft:2}}/>}</button><div style={{flex:1}}><div style={{height:3, background: isMe ? 'rgba(255,255,255,0.4)' : '#e4e6eb', borderRadius:2}}><div style={{width:`${pct}%`, height:3, background: isMe ? 'white' : '#0084ff', borderRadius:2, transition:'width 0.1s'}}/></div><div style={{fontSize:10, marginTop:4, opacity:0.8}}>{dur ? `${Math.floor(dur/60)}:${String(Math.floor(dur%60)).padStart(2,'0')}` : '0:00'} • 🔊</div></div></div>)
+  const fmt = (s:number)=> `${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,'0')}`
+  const avatar = (
+    <img src={avatarUrl || `https://ui-avatars.com/api/?name=U&background=0866ff&color=fff`} style={{width:38, height:38, borderRadius:'50%', objectFit:'cover', flexShrink:0, border:'2px solid rgba(255,255,255,0.2)'}} />
+  )
+  const playBtn = (
+    <button onClick={toggle} style={{width:34, height:34, border:'none', background:'transparent', display:'flex', alignItems:'center', justifyContent:'center', flexShrink:0, cursor:'pointer', padding:0}}>
+      {playing ? <Pause size={22} color={isMe ? '#d9fdd3' : '#aebac1'} fill={isMe ? '#d9fdd3' : '#aebac1'} /> : <Play size={22} color={isMe ? '#d9fdd3' : '#aebac1'} fill={isMe ? '#d9fdd3' : '#aebac1'} />}
+    </button>
+  )
+  const wave = (
+    <div style={{flex:1, minWidth:110}}>
+      <div style={{display:'flex', gap:1.5, alignItems:'center', height:28}}>
+        <div style={{width:9, height:9, borderRadius:'50%', background:'#53bdeb', flexShrink:0, zIndex:2}} />
+        {bars.current.map((h,i)=>{
+          const played = (i / bars.current.length * 100) < pct
+          return <div key={i} style={{width:2.5, height:`${h}px`, background: played ? '#53bdeb' : (isMe ? '#8ac9a0' : '#8696a0'), borderRadius:2, flexShrink:0}} />
+        })}
+      </div>
+      <div style={{fontSize:11, marginTop:1, color: isMe ? '#d9fdd3' : '#aebac1'}}>{fmt(playing ? cur : dur)}</div>
+    </div>
+  )
+  return (
+    <div style={{display:'flex', alignItems:'center', gap:8, minWidth:215, maxWidth:250}}>
+      {!isMe && (<>{playBtn}{wave}{avatar}</>)}
+      {isMe && (<>{avatar}{playBtn}{wave}</>)}
+    </div>
+  )
 }
 
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
@@ -575,4 +626,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   )
-              }
+                }
