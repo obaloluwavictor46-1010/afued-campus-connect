@@ -74,6 +74,65 @@ function ChatPage(){
   convIdRef.current = convId
   meRef.current = me
 
+  // --- CHAT REQUEST GATE ---
+  const [gate, setGate] = useState<'loading'|'none'|'pending_out'|'pending_in'|'declined'|'declined_in'|'allowed'>('loading')
+  const [gateReqId, setGateReqId] = useState<string | null>(null)
+  const [gateBusy, setGateBusy] = useState(false)
+
+  async function checkGate(myId: string){
+    try{
+      // 1. If dem don chat before (old chats), allow straight - no request needed
+      const { data: conv } = await supabase.from('conversations').select('id').or(`and(participant1.eq.${myId},participant2.eq.${otherUserId}),and(participant1.eq.${otherUserId},participant2.eq.${myId})`).maybeSingle()
+      if(conv){
+        const { count } = await supabase.from('messages').select('id', { count: 'exact', head: true }).eq('conversation_id', conv.id)
+        if((count||0) > 0){ setGate('allowed'); initChat({ id: myId }); return }
+      }
+      // 2. Check request
+      const { data: req } = await supabase.from('chat_requests').select('*').or(`and(sender_id.eq.${myId},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${myId})`).order('created_at',{ascending:false}).limit(1).maybeSingle()
+      if(!req){ setGate('none'); return }
+      setGateReqId(req.id)
+      if(req.status === 'accepted'){ setGate('allowed'); initChat({ id: myId }); return }
+      if(req.status === 'pending'){
+        if(req.sender_id === myId) setGate('pending_out')
+        else setGate('pending_in')
+        return
+      }
+      if(req.status === 'declined'){
+        if(req.sender_id === myId) setGate('declined')
+        else setGate('declined_in')
+        return
+      }
+      setGate('none')
+    }catch(e){ console.log(e); setGate('none') }
+  }
+
+  async function sendRequest(){
+    if(!me?.id || gateBusy) return
+    setGateBusy(true)
+    try{
+      if(gateReqId){
+        const { error } = await supabase.from('chat_requests').update({ status: 'pending' }).eq('id', gateReqId)
+        if(error) throw error
+      } else {
+        const { data, error } = await supabase.from('chat_requests').insert({ sender_id: me.id, receiver_id: otherUserId, status: 'pending' }).select().single()
+        if(error) throw error
+        if(data) setGateReqId(data.id)
+      }
+      setGate('pending_out')
+    }catch(e:any){ alert(e.message || 'Could not send request') }
+    setGateBusy(false)
+  }
+
+  async function handleIncoming(action: 'accepted' | 'declined'){
+    if(!gateReqId || gateBusy) return
+    setGateBusy(true)
+    const { error } = await supabase.from('chat_requests').update({ status: action }).eq('id', gateReqId)
+    if(error){ alert(error.message); setGateBusy(false); return }
+    if(action === 'accepted'){ setGate('allowed'); initChat(me) }
+    else { setGate('declined_in') }
+    setGateBusy(false)
+  }
+
   useEffect(()=>{
     let mounted = true
     async function boot(){
@@ -83,7 +142,7 @@ function ChatPage(){
         setMe(user); meRef.current = user
         const {data} = await supabase.from('profiles').select('*').eq('id', otherUserId).maybeSingle()
         if(mounted) setOther(data)
-        initChat(user)
+        if(user) checkGate(user.id)
       }catch(e){ console.log(e) }
     }
     boot()
@@ -93,6 +152,23 @@ function ChatPage(){
       try{ supabase.removeChannel(supabase.channel(`chat-${convIdRef.current}`)) }catch{}
     }
   },[otherUserId])
+
+  // Live update: if other person Accept, open chat automatically
+  useEffect(()=>{
+    if(!me?.id) return
+    const ch = supabase.channel(`gate-${me.id}-${otherUserId}`)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chat_requests' }, (payload:any)=>{
+        const r = payload.new
+        if(!r) return
+        const isBetween = (r.sender_id===me.id && r.receiver_id===otherUserId) || (r.sender_id===otherUserId && r.receiver_id===me.id)
+        if(!isBetween) return
+        setGateReqId(r.id)
+        if(r.status==='accepted'){ setGate('allowed'); initChat(me) }
+        else if(r.status==='pending'){ setGate(r.sender_id===me.id ? 'pending_out' : 'pending_in') }
+        else if(r.status==='declined'){ setGate(r.sender_id===me.id ? 'declined' : 'declined_in') }
+      }).subscribe()
+    return ()=>{ supabase.removeChannel(ch) }
+  },[me, otherUserId])
 
   useEffect(()=>{
     try{ listRef.current?.scrollTo({ top: listRef.current.scrollHeight, behavior: 'smooth' }) }catch{}
@@ -181,6 +257,7 @@ function ChatPage(){
   }
 
   async function send(type='text', content=''){
+    if(gate !== 'allowed'){ alert('Wait for them to accept your request first'); return }
     const msg = content || text
     if(!msg && type==='text') return
     if(!convId) return
@@ -240,6 +317,7 @@ function ChatPage(){
   }
 
   async function handleUpload(e:any, type='image'){
+    if(gate !== 'allowed') return
     const file = e.target.files[0]; if(!file) return
     if(file.type.startsWith('image/') || file.type.startsWith('video/')){ handlePick(e, type); return }
     if(file.size > 50*1024*1024){ e.target.value=''; return }
@@ -326,6 +404,57 @@ function ChatPage(){
         </Link>
         <div style={{display:'flex', gap:12, fontSize:18}}>📞 🎥</div>
       </div>
+
+      {gate === 'loading' && (<div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center'}}>Loading...</div>)}
+
+      {gate === 'none' && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
+          <img src={other?.avatar_url||`https://ui-avatars.com/api/?name=${other?.full_name||'User'}&background=0866ff&color=fff`} style={{width:90,height:90,borderRadius:45, objectFit:'cover'}}/>
+          <h3 style={{margin:'16px 0 6px'}}>{other?.full_name||'User'}</h3>
+          <p style={{color:'#65676b', fontSize:14, lineHeight:'20px'}}>Send a message request first.<br/>{other?.full_name||'They'} go Allow before you fit chat.</p>
+          <button onClick={sendRequest} disabled={gateBusy} style={{marginTop:20, padding:'13px 28px', border:'none', background:'#0084ff', color:'white', borderRadius:24, fontSize:15, fontWeight:'700'}}>{gateBusy ? 'Sending...' : '✉️ Send Message Request'}</button>
+        </div>
+      )}
+
+      {gate === 'pending_out' && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
+          <div style={{fontSize:48}}>⏳</div>
+          <h3 style={{margin:'16px 0 6px'}}>Request Sent</h3>
+          <p style={{color:'#65676b', fontSize:14, lineHeight:'20px'}}>Wait for {other?.full_name||'them'} to Allow.<br/>You no fit send message until dem accept.<br/>Chat go open automatically once dem Allow.</p>
+          <p style={{fontSize:12, color:'#999', marginTop:12}}>You go see notification for Chats once dem accept.</p>
+        </div>
+      )}
+
+      {gate === 'pending_in' && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
+          <img src={other?.avatar_url||`https://ui-avatars.com/api/?name=${other?.full_name||'User'}&background=0866ff&color=fff`} style={{width:90,height:90,borderRadius:45, objectFit:'cover'}}/>
+          <h3 style={{margin:'16px 0 6px'}}>{other?.full_name||'User'} wants to chat</h3>
+          <p style={{color:'#65676b', fontSize:14}}>Allow first before una fit chat.</p>
+          <div style={{display:'flex', gap:10, marginTop:20}}>
+            <button onClick={()=>handleIncoming('accepted')} disabled={gateBusy} style={{padding:'12px 22px', border:'none', background:'#16a34a', color:'white', borderRadius:24, fontWeight:'700'}}>✅ Allow</button>
+            <button onClick={()=>handleIncoming('declined')} disabled={gateBusy} style={{padding:'12px 22px', border:'none', background:'#fee2e2', color:'#b91c1c', borderRadius:24, fontWeight:'700'}}>❌ Decline</button>
+          </div>
+        </div>
+      )}
+
+      {gate === 'declined' && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
+          <div style={{fontSize:48}}>😔</div>
+          <h3 style={{margin:'16px 0 6px'}}>{other?.full_name||'They'} declined your request</h3>
+          <p style={{color:'#65676b', fontSize:14}}>You no fit chat for now. Try send request again later.</p>
+          <button onClick={sendRequest} disabled={gateBusy} style={{marginTop:20, padding:'13px 28px', border:'none', background:'#0084ff', color:'white', borderRadius:24, fontSize:15, fontWeight:'700'}}>{gateBusy ? 'Sending...' : '🔁 Send Request Again'}</button>
+        </div>
+      )}
+
+      {gate === 'declined_in' && (
+        <div style={{flex:1, display:'flex', flexDirection:'column', alignItems:'center', justifyContent:'center', padding:24, textAlign:'center'}}>
+          <div style={{fontSize:48}}>🚫</div>
+          <h3 style={{margin:'16px 0 6px'}}>You declined this request</h3>
+          <p style={{color:'#65676b', fontSize:14}}>You declined {other?.full_name||'them'}. Dem no fit message you.</p>
+        </div>
+      )}
+
+      {gate === 'allowed' && (<>
       <div ref={listRef} style={{flex:1, overflowY:'auto', padding:'12px 8px 90px'}}>
         {messages.map(m=>(
           <div key={m.id} style={{display:'flex', justifyContent: m.sender_id===me?.id?'flex-end':'flex-start', margin:'4px 0'}}>
@@ -368,6 +497,7 @@ function ChatPage(){
         <input ref={fileRef} type="file" hidden accept=".pdf,.doc,.docx,.zip,.mp3" onChange={e=>handleUpload(e,'file')}/>
         <input ref={camRef} type="file" accept="image/*,video/*" hidden onChange={e=>handleUpload(e,'image')}/>
       </div>
+      </>)}
     </div>
   )
 }
@@ -445,4 +575,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   )
-            }
+              }
