@@ -3,6 +3,7 @@ import { useEffect, useState, useRef } from 'react'
 import { supabase } from '../lib/supabase'
 import { uploadToBunny } from '../lib/bunny'
 import { Smile, Paperclip, Camera, Mic, Send, Trash2, Pause, Play, ArrowLeft } from 'lucide-react'
+import Cropper from "react-easy-crop"
 
 export const Route = createFileRoute('/chat/$userId')({
   component: ChatPage,
@@ -474,25 +475,42 @@ function VoiceBubble({ url, isMe }: { url: string; isMe: boolean }){
   )
 }
 
-// === WHATSAPP EDITOR - LIKE WHATSAPP ===
+// === WHATSAPP EDITOR - X | STICKER | CROP | Aa | PEN - NO MUSIC ===
+async function getCroppedImg(imageSrc: string, pixelCrop: any) {
+  const image = new Image();
+  image.crossOrigin = "anonymous";
+  image.src = imageSrc;
+  await new Promise((res) => (image.onload = res));
+  const canvas = document.createElement("canvas");
+  canvas.width = pixelCrop.width;
+  canvas.height = pixelCrop.height;
+  const ctx = canvas.getContext("2d")!;
+  ctx.drawImage(image, pixelCrop.x, pixelCrop.y, pixelCrop.width, pixelCrop.height, 0, 0, pixelCrop.width, pixelCrop.height);
+  return canvas.toDataURL("image/jpeg", 0.9);
+}
+
 function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const canvasRef = useRef<any>(null)
-  const [tool, setTool] = useState<'pen'|'emoji'>('pen')
+  const [tool, setTool] = useState<'pen'|'emoji'|'crop'>('pen')
   const [color, setColor] = useState('#ff0000')
   const [brushSize, setBrushSize] = useState(5)
   const [isDrawing, setIsDrawing] = useState(false)
   const [caption, setCaption] = useState('')
   const [history, setHistory] = useState<string[]>([])
   const COLORS = ['#ff0000','#ff9500','#ffeb00','#00e676','#00b0ff','#ff4081','#ffffff','#000000','#9c27b0']
-  const EMOJIS = ['😂','❤️','🔥','😍','👍','😮','🥰','😭','🙏','🎉','💯','😎']
+  const EMOJIS = ['😂','❤️','🔥','😍','👍','😮','🥰','😭','🙏','🎉','💯','😎','🎓','🇳🇬','✨','👑']
   const [emojis, setEmojis] = useState<any[]>([])
   const [texts, setTexts] = useState<any[]>([])
+  const [currentImage, setCurrentImage] = useState(imageUrl)
+  const [crop, setCrop] = useState({ x: 0, y: 0 })
+  const [zoom, setZoom] = useState(1)
+  const [croppedArea, setCroppedArea] = useState<any>(null)
 
   useEffect(()=>{
     if(isVideo) return
     const img = new Image()
     img.crossOrigin = 'anonymous'
-    img.src = imageUrl
+    img.src = currentImage
     img.onload = ()=>{
       const canvas = canvasRef.current
       if(!canvas) return
@@ -501,7 +519,7 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       const ctx = canvas.getContext('2d')
       ctx.drawImage(img, 0, 0)
     }
-  },[imageUrl, isVideo])
+  },[currentImage, isVideo])
 
   function saveHistory(){
     const canvas = canvasRef.current
@@ -557,6 +575,14 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   function addEmoji(emoji:string){
     setEmojis(prev=>[...prev, {emoji, x:60+prev.length*40, y:140}])
   }
+  async function applyCrop(){
+    if(!croppedArea) return
+    const cropped = await getCroppedImg(currentImage, croppedArea)
+    setCurrentImage(cropped)
+    setTool('pen')
+    setCrop({x:0,y:0})
+    setZoom(1)
+  }
   async function handleSend(){
     if(isVideo){ onSend(imageUrl, caption); return }
     const canvas = canvasRef.current
@@ -571,13 +597,25 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     <div style={{position:'fixed', inset:0, background:'black', zIndex:1000, display:'flex', flexDirection:'column'}}>
       <div style={{display:'flex', justifyContent:'space-between', padding:'12px', background:'#111'}}>
         <button onClick={onCancel} style={{color:'white', background:'none', border:'none', fontSize:20}}>✕</button>
-        <div style={{display:'flex', gap:16}}>
+        <div style={{display:'flex', gap:16, alignItems:'center'}}>
           <button onClick={()=>setTool('emoji')} style={{color: tool==='emoji'?'#00e676':'white', background:'none', border:'none', fontSize:20}}>😊</button>
-          <button onClick={addText} style={{color:'white', background:'none', border:'none', fontSize:20, fontWeight:'bold'}}>T</button>
+          {!isVideo && <button onClick={()=>setTool('crop')} style={{color: tool==='crop'?'#00e676':'white', background:'none', border:'none', fontSize:16, fontWeight:'bold'}}>Crop</button>}
+          <button onClick={addText} style={{color:'white', background:'none', border:'none', fontSize:20, fontWeight:'bold'}}>Aa</button>
           <button onClick={()=>setTool('pen')} style={{color: tool==='pen'?'#00e676':'white', background:'none', border:'none', fontSize:20}}>✏️</button>
           <button onClick={undo} style={{color:'white', background:'none', border:'none', fontSize:20}}>↩️</button>
         </div>
       </div>
+
+      {tool==='crop' && !isVideo ? (
+        <div style={{flex:1, position:'relative', background:'#000'}}>
+          <Cropper image={currentImage} crop={crop} zoom={zoom} aspect={4/5} onCropChange={setCrop} onZoomChange={setZoom} onCropComplete={(_, area)=>setCroppedArea(area)} />
+          <div style={{position:'absolute', bottom:16, left:16, right:16, display:'flex', gap:10}}>
+            <input type="range" min={1} max={3} step={0.1} value={zoom} onChange={e=>setZoom(Number(e.target.value))} style={{flex:1}} />
+            <button onClick={applyCrop} style={{background:'#00a884', color:'white', border:'none', padding:'10px 18px', borderRadius:20, fontWeight:'bold'}}>Done Crop</button>
+            <button onClick={()=>setTool('pen')} style={{background:'#333', color:'white', border:'none', padding:'10px 14px', borderRadius:20}}>Cancel</button>
+          </div>
+        </div>
+      ) : (
       <div style={{flex:1, display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden', position:'relative'}}>
         {isVideo ? (
           <video src={imageUrl} controls playsInline style={{maxWidth:'100%', maxHeight:'100%'}} />
@@ -587,6 +625,7 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
         {texts.map((t:any,i:number)=>(<div key={i} style={{position:'absolute', left:t.x, top:120+t.y, color:t.color, fontSize:26, fontWeight:'bold', textShadow:'0 2px 4px black'}}>{t.text}</div>))}
         {emojis.map((e:any,i:number)=>(<div key={i} style={{position:'absolute', left:e.x, top:150+e.y, fontSize:36}}>{e.emoji}</div>))}
       </div>
+      )}
       {tool==='emoji' && (
         <div style={{background:'#222', padding:12, display:'flex', gap:8, flexWrap:'wrap'}}>
           {EMOJIS.map(e=><button key={e} onClick={()=>addEmoji(e)} style={{fontSize:28, background:'none', border:'none'}}>{e}</button>)}
@@ -613,4 +652,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       </div>
     </div>
   )
-}
+    }
