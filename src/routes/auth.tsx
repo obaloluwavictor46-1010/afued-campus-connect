@@ -32,13 +32,10 @@ function AuthPage() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
-  // If user don login already and no be reset link, go home
   useEffect(() => {
     if (user && mode !== "reset") navigate({ to: "/" });
   }, [user, navigate, mode]);
 
-  // If person press reset link for Gmail, Supabase go put #access_token + type=recovery for URL
-  // Then we show Reset Password form
   useEffect(() => {
     const hash = window.location.hash;
     if (hash.includes("type=recovery") || hash.includes("access_token")) {
@@ -49,7 +46,6 @@ function AuthPage() {
 
   const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF({ ...f, [k]: e.target.value });
 
-  // Resend verification link - for person wey no see first email
   const resendVerify = async () => {
     if (!f.email.includes("@")) { setNotice({ type: "error", text: "Put your Gmail first" }); return; }
     setBusy(true);
@@ -66,7 +62,6 @@ function AuthPage() {
     try {
       const cleanEmail = f.email.trim().toLowerCase();
 
-      // ===== SIGNUP =====
       if (mode === "signup") {
         if (!f.full_name.trim()) throw new Error("Put your full name");
         if (!cleanEmail.includes("@")) throw new Error("Put correct Gmail, e.g name@gmail.com");
@@ -82,7 +77,6 @@ function AuthPage() {
         });
         if (error) throw error;
 
-        // If Supabase need confirm email, no session go come - show check email
         if (data.user && !data.session) {
           setCheckEmail(true);
           setNotice({ type: "success", text: `We don send verification link to ${cleanEmail}. Go open your Gmail (check Spam / Promotions too), press the link, then come login.` });
@@ -99,11 +93,10 @@ function AuthPage() {
         navigate({ to: "/" });
       }
 
-      // ===== LOGIN - WITH EMAIL VERIFY CHECK =====
       else if (mode === "login") {
-        const { data, error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: f.password });
+        // FIXED: Remove unused 'data' - na this dey cause Vercel build fail
+        const { error } = await supabase.auth.signInWithPassword({ email: cleanEmail, password: f.password });
         if (error) {
-          // Clear message for fake / unverified
           if (error.message.includes("Invalid login credentials")) throw new Error("Wrong email or password. If you never verify your Gmail, go check Gmail for verification link.");
           if (error.message.toLowerCase().includes("email not confirmed") || error.message.toLowerCase().includes("not confirmed")) {
             setCheckEmail(true);
@@ -112,7 +105,6 @@ function AuthPage() {
           throw error;
         }
 
-        // FIX: Check if email don verify - block James fake Gmail
         const { data: { user: loggedUser } } = await supabase.auth.getUser();
         if (loggedUser && !loggedUser.email_confirmed_at) {
           await supabase.auth.signOut();
@@ -124,20 +116,17 @@ function AuthPage() {
         navigate({ to: "/" });
       }
 
-      // ===== FORGOT PASSWORD - SEND RESET LINK =====
       else if (mode === "forgot") {
         if (!cleanEmail.includes("@")) throw new Error("Put your Gmail first");
         const { error } = await supabase.auth.resetPasswordForEmail(cleanEmail, {
           redirectTo: window.location.origin + "/auth",
         });
         if (error) throw error;
-        // For security, always show success even if email no exist
         setCheckEmail(true);
         setNotice({ type: "success", text: `If ${cleanEmail} dey for our system, we don send reset link go there. Go check Gmail (check Spam too), press link, set new password.` });
         toast.success("Reset link sent! Check Gmail.");
       }
 
-      // ===== RESET PASSWORD - AFTER PRESSING LINK FOR GMAIL =====
       else if (mode === "reset") {
         if (f.password.length < 6) throw new Error("Password must be at least 6 characters");
         if (f.password !== confirmPassword) throw new Error("Two passwords no match");
@@ -148,7 +137,6 @@ function AuthPage() {
         setMode("login");
         setF({ ...f, password: "" });
         setConfirmPassword("");
-        // Clear hash from URL
         window.history.replaceState(null, "", "/auth");
       }
 
@@ -171,7 +159,6 @@ function AuthPage() {
         </div>
 
         <form onSubmit={submit} className="space-y-3 rounded-3xl bg-card p-6 shadow-elevated">
-          {/* Tabs - Only show for login/signup */}
           {(mode === "login" || mode === "signup") && (
             <div className="mb-2 grid grid-cols-2 rounded-2xl bg-muted p-1">
               {(["signup", "login"] as const).map((m) => (
@@ -182,7 +169,6 @@ function AuthPage() {
             </div>
           )}
 
-          {/* Titles for forgot / reset */}
           {mode === "forgot" && (
             <div className="text-center">
               <h2 className="text-lg font-bold">Forgot Password?</h2>
@@ -196,7 +182,6 @@ function AuthPage() {
             </div>
           )}
 
-          {/* Notice Box */}
           {notice && (
             <div className={`flex gap-2 rounded-2xl p-3 text-[13px] leading-5 ${notice.type === "error" ? "bg-red-50 text-red-700" : notice.type === "success" ? "bg-green-50 text-green-700" : "bg-blue-50 text-blue-700"}`}>
               {notice.type === "error" ? <AlertCircle className="h-4 w-4 shrink-0 mt-0.5" /> : <CheckCircle className="h-4 w-4 shrink-0 mt-0.5" />}
@@ -204,7 +189,6 @@ function AuthPage() {
             </div>
           )}
 
-          {/* Check Email Box */}
           {checkEmail && (mode === "login" || mode === "forgot" || mode === "signup") && (
             <div className="rounded-2xl bg-yellow-50 p-3 text-[13px] leading-5 text-yellow-800">
               <div className="flex gap-1.5 font-semibold"><MailCheck className="h-4 w-4" /> Check your Gmail now!</div>
@@ -226,7 +210,6 @@ function AuthPage() {
             <input required type="email" placeholder="Email" className={field} value={f.email} onChange={set("email")} />
           )}
 
-          {/* Password with Eye */}
           <div className="relative">
             <input required type={showPass ? "text" : "password"} minLength={6} placeholder={mode === "reset" ? "New password (min 6)" : "Password"} className={field + " pr-11"} value={f.password} onChange={set("password")} />
             <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
@@ -234,7 +217,6 @@ function AuthPage() {
             </button>
           </div>
 
-          {/* Confirm Password - Only for Reset */}
           {mode === "reset" && (
             <div className="relative">
               <input required type={showConfirm ? "text" : "password"} minLength={6} placeholder="Confirm new password" className={field + " pr-11"} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} />
@@ -250,7 +232,6 @@ function AuthPage() {
             </select>
           )}
 
-          {/* Forgot Password Link - Only for Login */}
           {mode === "login" && (
             <div className="text-right">
               <button type="button" onClick={() => { setMode("forgot"); setNotice(null); setCheckEmail(false); }} className="text-[13px] font-semibold text-primary">Forgot Password?</button>
@@ -261,7 +242,6 @@ function AuthPage() {
             {busy ? <Loader2 className="h-5 w-5 animate-spin" /> : mode === "signup" ? "Create account" : mode === "login" ? "Log in" : mode === "forgot" ? "Send Reset Link" : "Save New Password"}
           </button>
 
-          {/* Back to Login */}
           {(mode === "forgot" || mode === "reset") && (
             <div className="text-center text-sm">
               <button type="button" onClick={() => { setMode("login"); setNotice(null); setCheckEmail(false); window.history.replaceState(null, "", "/auth"); }} className="font-semibold text-primary">Back to Login</button>
@@ -277,4 +257,4 @@ function AuthPage() {
 export function shortFaculty(faculty: string) {
   if (!faculty) return "";
   return faculty.slice(0, 4).toUpperCase();
-}
+                              }
