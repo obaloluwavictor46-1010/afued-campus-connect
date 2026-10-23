@@ -209,12 +209,14 @@ function AuthPage() {
             <input required type="email" placeholder="Email" className={field} value={f.email} onChange={set("email")} />
           )}
 
-          <div className="relative">
-            <input required type={showPass ? "text" : "password"} minLength={6} placeholder={mode === "reset" ? "New password (min 6)" : "Password"} className={field + " pr-11"} value={f.password} onChange={set("password")} />
-            <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
-              {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
-            </button>
-          </div>
+          {mode !== "forgot" && (
+            <div className="relative">
+              <input required type={showPass ? "text" : "password"} minLength={6} placeholder={mode === "reset" ? "New password (min 6)" : "Password"} className={field + " pr-11"} value={f.password} onChange={set("password")} />
+              <button type="button" onClick={() => setShowPass(!showPass)} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground">
+                {showPass ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
+              </button>
+            </div>
+          )}
 
           {mode === "reset" && (
             <div className="relative">
@@ -252,4 +254,4 @@ function AuthPage() {
       </div>
     </div>
   );
-}
+        }
