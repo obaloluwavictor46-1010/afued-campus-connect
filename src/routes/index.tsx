@@ -66,8 +66,7 @@ function generateVideoPoster(file: File): Promise<string> {
         } else { URL.revokeObjectURL(url); resolve(""); }
       } catch { URL.revokeObjectURL(url); resolve(""); }
     };
-    v.onerror = () => { URL.revokeObjectURL(url); resolve(""); };
-    // Timeout - if e no snap in 2s, no wahala, continue
+    v.onerror = () => { URL.revokeObjectURL(url); resolve(""); }
     setTimeout(() => { URL.revokeObjectURL(url); resolve(""); }, 2000);
     v.src = url;
   });
@@ -97,7 +96,8 @@ function FeedInner() {
   const [repostingId, setRepostingId] = useState<string | null>(null);
 
   const loadReposts = async () => {
-    const { data } = await supabase.from("reposts").select("post_id, user_id, created_at").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("reposts").select("post_id, user_id, created_at").order("created_at", { ascending: false });
+    if (error) { console.log("LOAD REPOSTS ERROR:", error.code, error.message); return; }
     if (!data) return;
     const counts: Record<string, number> = {};
     const mine = new Set<string>();
@@ -125,6 +125,7 @@ function FeedInner() {
     }
   };
 
+  // === FIXED: No more fake "table never create" lie. Show real error. ===
   const handleRepost = async (post: Post) => {
     if (!user) { toast.error("Login first"); return; }
     if (repostingId === post.id) return;
@@ -145,9 +146,17 @@ function FeedInner() {
         setRepostCounts(prev => ({ ...prev, [post.id]: (prev[post.id] || 0) + 1 }));
       }
     } catch (e: any) {
-      if (e.message?.includes("reposts") || e.code === "42P01") {
+      console.log("REPOST REAL ERROR:", e);
+      if (e.code === "42P01") {
         toast.error("Repost table never create yet - run SQL for reposts first");
-      } else toast.error(e.message || "Repost failed");
+      } else if (e.code === "23505") {
+        toast.error("You don repost this one before");
+        setMyReposts(prev => new Set(prev).add(post.id));
+      } else if (e.code === "42501") {
+        toast.error("Policy still block am (42501) - run policy SQL again");
+      } else {
+        toast.error(`Repost failed: ${e.code || ""} - ${e.message || "Unknown error"}`);
+      }
     } finally { setRepostingId(null); }
   };
 
@@ -180,13 +189,10 @@ function FeedInner() {
           v.setAttribute("data-patched", "1");
           v.preload = "metadata";
           try { (v as any).playsInline = true; } catch {}
-          // === TIKTOK FIX: Force browser to load only first frame fast, so e no black ===
           try {
             if (v.src && !v.src.includes("#t=") && v.src.startsWith("http")) {
-              // Keep original src, but add #t=0.1 for poster frame
               const cleanSrc = v.src.split("#")[0];
               v.setAttribute("data-original-src", cleanSrc);
-              // Don't change src if e don already load, just set poster trick via preload
               v.poster = v.poster || "";
             }
           } catch {}
@@ -335,7 +341,6 @@ function FeedInner() {
                   <div className="h-full w-full animate-pulse bg-primary" style={{ width: `${(p as any).uploadPct || 30}%` }} />
                 </div>
               )}
-              {/* === ADDED: TIKTOK POSTER for uploading 3-mins video - show picture immediately, no black === */}
               {(p as any).isUploading && (p as any).poster_url && (p as any).video_url && (
                 <div className="relative mb-[-8px] overflow-hidden rounded-t-2xl bg-black">
                   <img src={(p as any).poster_url} alt="" className="h-56 w-full object-cover opacity-90" />
@@ -475,7 +480,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
     const filesToUpload = editedFiles.length > 0 ? editedFiles : picker.files;
-    // === 3 MINS LIMIT + BIG VIDEO WARNING ===
     for (const f of filesToUpload) {
       if ((f as any).type?.startsWith("video/")) {
         const check = await checkVideoDuration(f as File);
@@ -483,7 +487,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
           toast.error(`Video too long! ${Math.floor(check.dur)}s - Max na 3 minutes (180s). Cut am short and try again.`);
           return;
         }
-        // === ADDED: Tell user if video big, e go take small time but e go show now ===
         const sizeMB = (f as File).size / (1024 * 1024);
         if (sizeMB > 50) {
           toast.success(`Big video (${Math.round(sizeMB)}MB - ${Math.floor(check.dur)}s) - E go show now for feed, upload dey run for background, no close app 🚀`);
@@ -497,7 +500,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     let localMusic = "";
     let localPoster = "";
     const blobUrls: string[] = [];
-    // === ADDED: Generate poster for first video BEFORE showing temp post - so e no black ===
     for (const f of filesToUpload) {
       if ((f as any).type?.startsWith("video/") && !localPoster) {
         try { localPoster = await generateVideoPoster(f as File); } catch { localPoster = ""; }
@@ -530,7 +532,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
       isUploading: true,
       uploadPct: 5
     };
-    // === TIKTOK POP: Show immediately with poster, no wait upload finish ===
     onOptimisticAdd(tempPost);
     toast.success("Posting... Video go show now with picture, upload dey run for background 🚀");
     const savedContent = content.trim();
@@ -1065,4 +1066,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-                     }
+          }
