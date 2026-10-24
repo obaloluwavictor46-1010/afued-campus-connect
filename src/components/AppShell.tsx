@@ -1,6 +1,6 @@
 import { Link, useNavigate } from "@tanstack/react-router";
 import { useEffect, type ReactNode } from "react";
-import { Home, ShoppingBag, User, Loader2, MessageCircle, Megaphone, Shield } from "lucide-react";
+import { Home, ShoppingBag, User, Loader2, MessageCircle, Megaphone, Shield, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { startPresence } from "@/lib/presence";
 
@@ -21,7 +21,7 @@ export function AppShell({ children, title, bare }: { children: ReactNode; title
 
   if (bare) return <div className="mx-auto min-h-screen max-w-xl">{children}</div>;
 
-  const item = "flex flex-1 flex-col items-center gap-1 py-2 text-[11px] font-medium text-muted-foreground";
+  const item = "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium text-muted-foreground";
   return (
     <div className="mx-auto min-h-screen max-w-xl pb-20">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur">
@@ -39,6 +39,9 @@ export function AppShell({ children, title, bare }: { children: ReactNode; title
         <div className="mx-auto flex max-w-xl">
           <Link to="/" className={item} activeProps={{ className: "!text-primary" }} activeOptions={{ exact: true }}>
             <Home className="h-6 w-6" /> Feed
+          </Link>
+          <Link to="/meet-people" className={item} activeProps={{ className: "!text-primary" }}>
+            <Users className="h-6 w-6" /> Meet People
           </Link>
           <Link to="/announcements" className={item} activeProps={{ className: "!text-primary" }}>
             <Megaphone className="h-6 w-6" /> News
