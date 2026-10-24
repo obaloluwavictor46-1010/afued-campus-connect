@@ -9,8 +9,9 @@ import { MediaGallery } from "./MediaView";
 import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// VIDEO - TIKTOK STYLE: Preload + Poster go pop immediately, no black
+// VIDEO - FIXED: Observer on WRAPPER, not on video. 1 observer only.
 function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
+  const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [dlProgress, setDlProgress] = useState(0)
   const [isDownloading, setIsDownloading] = useState(false)
@@ -20,7 +21,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   const [isLoaded, setIsLoaded] = useState(false)
   const [isNear, setIsNear] = useState(false)
 
-  // === TIKTOK POSTER: Generate poster from video first frame in 0.5s ===
   useEffect(() => {
     setPoster("")
     setIsLoaded(false)
@@ -50,22 +50,21 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     v.src = src.includes("#t=") ? src : `${src}#t=0.1`
   }, [src, retryKey])
 
-  // === TIKTOK PRELOAD: Start load when video dey 800px away ===
+  // FIXED: ONE observer on wrapper div. Near (800px) = load, Far = pause only, no blank.
   useEffect(() => {
-    const video = videoRef.current;
-    if (!video) return;
+    const wrap = wrapRef.current;
+    if (!wrap) return;
     const obs = new IntersectionObserver(
       ([e]) => {
         if (e.isIntersecting) setIsNear(true);
-        else if (video) video.pause();
+        else videoRef.current?.pause();
       },
-      { threshold: 0, rootMargin: "800px 0px 800px 0px" }
+      { threshold: 0.05, rootMargin: "800px 0px 800px 0px" }
     );
-    obs.observe(video);
+    obs.observe(wrap);
     return () => obs.disconnect();
   }, [src, retryKey]);
 
-  // === FIX: When this video start play, pause every other video + music ===
   const handlePlay = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
       if (el !== videoRef.current) { try { el.pause(); } catch {} }
@@ -77,9 +76,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     });
   };
 
-  const handleError = () => {
-    setHasError(true);
-  };
+  const handleError = () => setHasError(true);
   const handleRetry = () => {
     setHasError(false);
     setRetryKey(k => k + 1);
@@ -87,7 +84,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   };
 
   return (
-    <div className="relative w-full bg-black group overflow-hidden">
+    <div ref={wrapRef} className="relative w-full bg-black group overflow-hidden min-h-[280px]">
       {!isLoaded && poster && (
         <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
@@ -113,7 +110,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
         className="relative z-10 w-full max-h-[480px] bg-black"
         style={{ opacity: isLoaded || !poster ? 1 : 0.01 }}
       />
-      
       {hasError && (
         <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
           <span className="text-3xl">↻</span>
@@ -121,21 +117,14 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
           <span className="text-xs text-white/70">E never delete, na network</span>
         </button>
       )}
-
       <div className="absolute bottom-10 left-2 z-20 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
-
       <button
         onClick={async (e)=>{
           e.stopPropagation()
           setIsDownloading(true)
-          try {
-            await downloadVideoWithAFUEDWatermark(src, authorName, (p)=>setDlProgress(p))
-          } finally {
-            setIsDownloading(false)
-            setDlProgress(0)
-          }
+          try { await downloadVideoWithAFUEDWatermark(src, authorName, (p)=>setDlProgress(p)) } finally { setIsDownloading(false); setDlProgress(0) }
         }}
         disabled={isDownloading}
         className="absolute bottom-2 right-2 z-20 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
@@ -143,7 +132,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
         <Download className="h-3 w-3" />
         {isDownloading ? ` ${dlProgress}%` : " Download"}
       </button>
-
       {isDownloading && (
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 z-20">
           <div className="h-full bg-[#00a884] transition-all duration-200" style={{width: `${dlProgress}%`}}></div>
@@ -153,28 +141,35 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   )
 }
 
-// IFRAME - TIKTOK PRELOAD: As you dey watch 1, next 2-3 don dey load for background. NO double text, NO Processing
+// IFRAME - FIXED: ONE observer only. No double text. No blanking bug.
 function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
-  const savedSrc = useRef(src);
   const [isDownloading, setIsDownloading] = useState(false);
-  // FIXED: Old video (no poster) = no cover at all. New video (with poster) = show cover
   const [showCover, setShowCover] = useState(!!posterUrl);
   const [isNear, setIsNear] = useState(false);
   const [isReady, setIsReady] = useState(false);
+  const [isVisible, setIsVisible] = useState(false);
 
-  useEffect(() => {
-    setShowCover(!!posterUrl);
-  }, [posterUrl]);
+  useEffect(() => { setShowCover(!!posterUrl); }, [posterUrl]);
 
-  // === TIKTOK PRELOAD: Start load when video dey 1000px away (2-3 videos under) ===
+  // FIXED: ONE observer does preload + pause. No second observer to fight am.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
-        if (entry.isIntersecting) setIsNear(true);
+        // Near = 1000px away (2-3 videos under) -> start loading for background
+        if (entry.isIntersecting) {
+          setIsNear(true);
+          setIsVisible(true);
+        } else {
+          // Far away -> pause via postMessage, DON'T blank src, so preload no die
+          setIsVisible(false);
+          try {
+            iframeRef.current?.contentWindow?.postMessage({ action: "pause" }, "*");
+          } catch {}
+        }
       },
       { threshold: 0, rootMargin: "1000px 0px 1000px 0px" }
     );
@@ -182,44 +177,13 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
     return () => obs.disconnect();
   }, []);
 
-  // === AUTO HIDE COVER when iframe don load for background ===
+  // Auto-hide cover when iframe don load
   useEffect(() => {
     if (!isNear) return;
-    if (!posterUrl) {
-      setShowCover(false);
-      return;
-    }
-    const t = setTimeout(() => {
-      setIsReady(true);
-      setShowCover(false);
-    }, 1800);
+    if (!posterUrl) { setShowCover(false); return; }
+    const t = setTimeout(() => { setIsReady(true); setShowCover(false); }, 1800);
     return () => clearTimeout(t);
   }, [isNear, posterUrl]);
-
-  // === PAUSE when comot for screen ===
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        const iframe = iframeRef.current;
-        if (!iframe) return;
-        if (!entry.isIntersecting) {
-          if (iframe.src !== "about:blank") {
-            savedSrc.current = iframe.src;
-            iframe.src = "about:blank";
-          }
-        } else {
-          if (iframe.src === "about:blank" && isNear) {
-            iframe.src = savedSrc.current;
-          }
-        }
-      },
-      { threshold: 0 }
-    );
-    obs.observe(wrap);
-    return () => obs.disconnect();
-  }, [isNear]);
 
   const handleWrapClick = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
@@ -236,7 +200,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
           src={src}
           onLoad={() => setIsReady(true)}
           className="w-full h-full"
-          style={{ border: 0, opacity: showCover ? 0 : 1 }}
+          style={{ border: 0, opacity: showCover ? 0 : 1, visibility: isVisible ? "visible" : "visible" }}
           allow="autoplay; fullscreen"
           allowFullScreen
         />
@@ -246,7 +210,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
         </div>
       )}
 
-      {/* COVER: ONLY new video with poster, 1 text only, go comot by itself when ready */}
+      {/* COVER: ONLY 1 text. Old video (no poster) = no cover at all */}
       {showCover && posterUrl && isNear && (
         <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
           <img src={posterUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -264,16 +228,11 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
       <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
-
       <button
         onClick={async (e)=>{
           e.stopPropagation()
           setIsDownloading(true)
-          try {
-            await downloadAFUEDVideoSimple(src, authorName)
-          } finally {
-            setIsDownloading(false)
-          }
+          try { await downloadAFUEDVideoSimple(src, authorName) } finally { setIsDownloading(false) }
         }}
         disabled={isDownloading}
         className="absolute bottom-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1"
@@ -292,27 +251,21 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const cardRef = useRef<HTMLElement>(null);
-
-  // === REPOST LIKE TIKTOK - inside PostCard ===
   const [repostCount, setRepostCount] = useState(0);
   const [myReposted, setMyReposted] = useState(false);
   const [reposting, setReposting] = useState(false);
 
   useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
 
-  // Load repost count + if I don repost this post
   useEffect(() => {
     let cancelled = false;
     const loadRepost = async () => {
       const { data, error } = await supabase.from("reposts").select("id, user_id").eq("post_id", post.id);
       if (cancelled || error) return;
       setRepostCount((data || []).length);
-      if (user?.id) {
-        setMyReposted((data || []).some((r: any) => r.user_id === user.id));
-      }
+      if (user?.id) setMyReposted((data || []).some((r: any) => r.user_id === user.id));
     };
     loadRepost();
-    // Live update when person repost
     const ch = supabase.channel(`repost-${post.id}`).on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `post_id=eq.${post.id}` }, loadRepost).subscribe();
     return () => { cancelled = true; supabase.removeChannel(ch); };
   }, [post.id, user?.id]);
@@ -348,10 +301,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (!card) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
-        if (!entry.isIntersecting && audio) {
-          audio.pause();
-          setPlaying(false);
-        }
+        if (!entry.isIntersecting && audio) { audio.pause(); setPlaying(false); }
       },
       { threshold: 0 }
     );
@@ -359,10 +309,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => obs.disconnect();
   }, []);
   
-  const toggle = () => {
-    localStorage.setItem(key, liked ? "0" : "1");
-    setLiked(!liked);
-  };
+  const toggle = () => { localStorage.setItem(key, liked ? "0" : "1"); setLiked(!liked); };
 
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
@@ -376,9 +323,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (typeof raw === 'string') {
       const parsed = JSON.parse(raw);
       imageUrls = Array.isArray(parsed) ? parsed : [parsed];
-    } else if (Array.isArray(raw)) {
-      imageUrls = raw;
-    }
+    } else if (Array.isArray(raw)) { imageUrls = raw; }
   } catch {
     const raw = post.image_urls || post.image_url || "";
     if (typeof raw === 'string' && raw.startsWith('http')) imageUrls = [raw];
@@ -395,13 +340,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
       }
     });
-    if (playing) {
-      audioRef.current.pause();
-      setPlaying(false);
-    } else {
-      audioRef.current.play();
-      setPlaying(true);
-    }
+    if (playing) { audioRef.current.pause(); setPlaying(false); } else { audioRef.current.play(); setPlaying(true); }
   };
 
   return (
@@ -421,7 +360,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         )}
       </div>
       {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
-      
       <div className="relative">
         <MediaGallery urls={imageUrls} />
         {musicUrl && imageUrls.length > 0 && (
@@ -432,11 +370,9 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
           </button>
         )}
       </div>
-
       {videoUrl && !imageUrls.length && (
         isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} authorName={authorName} posterUrl={posterUrl} /> : <AutoPauseVideo src={videoUrl} authorName={authorName} />
       )}
-
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
         <div className="mx-4 mb-3 flex items-center gap-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 p-3 border">
           <button onClick={togglePlay} className="flex h-10 w-10 items-center justify-center rounded-full bg-primary text-white shadow">
@@ -448,9 +384,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
           </div>
         </div>
       )}
-
       {musicUrl && <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />}
-
       <div className="flex items-center gap-5 px-4 py-3">
         <button onClick={toggle} className="flex items-center gap-1.5 text-sm font-medium">
           <Heart className={`h-6 w-6 transition ${liked ? "fill-like text-like scale-110" : ""}`} />
@@ -468,4 +402,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-    }
+      }
