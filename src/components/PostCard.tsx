@@ -13,15 +13,16 @@ function pauseAllOthers(except?: HTMLMediaElement | null) {
   document.querySelectorAll("video, audio").forEach((el: any) => {
     if (el !== except) { try { el.pause(); } catch {} }
   });
+  // Also try pause Bunny iframes
+  document.querySelectorAll("iframe").forEach((f: any) => {
+    try { f.contentWindow?.postMessage({ action: "pause" }, "*"); } catch {}
+  });
 }
 
 // ===== STEP 1 FIX: Build MP4 from video link itself, no Vercel wahala =====
-// Example src: https://iframe.mediadelivery.net/embed/123456/abc-def
-// We take 123456 and abc-def FROM the link, so e no fit mismatch
 function parseBunny(src: string) {
   if (!src.includes("iframe.mediadelivery.net")) return null;
   const parts = src.split("/");
-  // ["https:", "", "iframe.mediadelivery.net", "embed", "LIBRARY", "VIDEO_ID"]
   const lib = parts[4] || "";
   const id = (parts[5] || "").split("?")[0].split("#")[0] || "";
   if (!lib || !id) return null;
@@ -43,7 +44,7 @@ function toPosterUrl(src: string, fallback: string): string {
   return "";
 }
 
-// ===== STEP 1: TikTokVideo - NO COVER, NO ROLL-ROLL, NATIVE CONTROLS =====
+// ===== STEP 1 + STEP 2: TikTokVideo =====
 function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -53,12 +54,33 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
   const [posterOk, setPosterOk] = useState(true);
 
   const isStream = src.includes("iframe.mediadelivery.net");
-  // Try in order: 720 -> 480 -> 360 -> 240 . No loop, one by one.
   const qualities = ["720p", "480p", "360p", "240p"];
   const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
   const poster = toPosterUrl(src, posterUrl || "");
 
-  // Pause when scroll comot
+  // ===== STEP 2 MAIN FIX: Global play listener =====
+  // If ANY video/audio for page start, pause this one. If MY OWN start, pause others.
+  // capture: true = we catch am before sound go mix even for 1 second.
+  useEffect(() => {
+    const onAnyPlay = (e: any) => {
+      const target = e.target as HTMLMediaElement;
+      const mine = videoRef.current;
+      if (!mine) return;
+      if (target === mine) {
+        // Na my own dey play - pause everybody else
+        document.querySelectorAll("video, audio").forEach((el: any) => {
+          if (el !== mine) { try { el.pause(); } catch {} }
+        });
+      } else {
+        // Na another person dey play - pause mine
+        if (!mine.paused) { try { mine.pause(); } catch {} }
+      }
+    };
+    document.addEventListener("play", onAnyPlay, true);
+    return () => document.removeEventListener("play", onAnyPlay, true);
+  }, []);
+
+  // Pause when scroll comot - Step 3 go make am stronger, but keep this one for now
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -75,19 +97,16 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
   }, [directSrc, useIframe]);
 
   const handleError = () => {
-    // Try next quality once
     if (isStream && qualityIndex < qualities.length - 1) {
       setQualityIndex((i) => i + 1);
       return;
     }
-    // All MP4 fail -> Bunny iframe player MUST play
     if (isStream) {
       setUseIframe(true);
       return;
     }
   };
 
-  // Iframe fallback - for old videos like Vikky own
   if (useIframe) {
     return (
       <div className="relative w-full bg-black overflow-hidden" style={{ height: 380 }}>
@@ -101,7 +120,6 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
 
   return (
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden">
-      {/* NO COVER BUTTON AGAIN. Video na the button. Controls go show. */}
       <video
         key={`${qualityIndex}`}
         ref={videoRef}
@@ -114,19 +132,14 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
         onPlay={() => pauseAllOthers(videoRef.current)}
         className="w-full max-h-[520px] min-h-[280px] bg-zinc-900 object-contain"
       />
-
-      {/* If poster fail, show gradient behind - no black empty. Video controls still dey on top. */}
       {!posterOk && (
-        <div className="pointer-events-none absolute inset-0 -z-0 flex items-center justify-center bg-gradient-to-br from-[#00a884]/40 via-zinc-900 to-black">
+        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#00a884]/40 via-zinc-900 to-black">
           <span className="text-[80px] font-black text-white/20">{authorName.charAt(0).toUpperCase()}</span>
         </div>
       )}
-
-      {/* Hidden img to check if poster dey work, if e fail we show gradient */}
       {poster && (
         <img src={poster} alt="" className="hidden" onError={() => setPosterOk(false)} />
       )}
-
       <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
@@ -262,6 +275,22 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     } finally { setReposting(false); }
   };
 
+  // ===== STEP 2: Music audio self go join the "only 1 play" rule =====
+  // If video start, music go pause. If music start, video go pause.
+  useEffect(() => {
+    const audio = audioRef.current;
+    if (!audio) return;
+    const onAudioPlay = () => {
+      // Music start - pause all videos
+      document.querySelectorAll("video").forEach((v: any) => { try { v.pause(); } catch {} });
+      setPlaying(true);
+    };
+    const onAudioPause = () => setPlaying(false);
+    audio.addEventListener("play", onAudioPlay);
+    audio.addEventListener("pause", onAudioPause);
+    return () => { audio.removeEventListener("play", onAudioPlay); audio.removeEventListener("pause", onAudioPause); };
+  }, [musicUrl]);
+
   useEffect(() => {
     const card = cardRef.current;
     const audio = audioRef.current;
@@ -367,4 +396,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-    }
+        }
