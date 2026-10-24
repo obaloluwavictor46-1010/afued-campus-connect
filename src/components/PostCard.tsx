@@ -9,7 +9,7 @@ import { MediaGallery } from "./MediaView";
 import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// VIDEO - TIKTOK STYLE: Poster go pop immediately, no black screen, fast like 18s video
+// VIDEO - TIKTOK STYLE: Preload + Poster go pop immediately, no black
 function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [dlProgress, setDlProgress] = useState(0)
@@ -18,6 +18,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   const [retryKey, setRetryKey] = useState(0)
   const [poster, setPoster] = useState<string>("")
   const [isLoaded, setIsLoaded] = useState(false)
+  const [isNear, setIsNear] = useState(false)
 
   // === TIKTOK POSTER: Generate poster from video first frame in 0.5s ===
   useEffect(() => {
@@ -49,23 +50,26 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     v.src = src.includes("#t=") ? src : `${src}#t=0.1`
   }, [src, retryKey])
 
+  // === TIKTOK PRELOAD: Start load when video dey 800px away ===
   useEffect(() => {
     const video = videoRef.current;
     if (!video) return;
     const obs = new IntersectionObserver(
-      ([e]) => { if (!e.isIntersecting) video.pause(); },
-      { threshold: 0, rootMargin: "0px 0px -100px 0px" }
+      ([e]) => {
+        if (e.isIntersecting) setIsNear(true);
+        else if (video) video.pause();
+      },
+      { threshold: 0, rootMargin: "800px 0px 800px 0px" }
     );
     obs.observe(video);
     return () => obs.disconnect();
   }, [src, retryKey]);
 
-  // === FIX: When this video start play, pause every other video + music for whole app ===
+  // === FIX: When this video start play, pause every other video + music ===
   const handlePlay = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
       if (el !== videoRef.current) { try { el.pause(); } catch {} }
     });
-    // Kill Bunny iframes too - set them to blank then restore on tap
     document.querySelectorAll('iframe').forEach((f: any) => {
       if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
         try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
@@ -73,7 +77,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     });
   };
 
-  // === FIX 4: If video be like e don delete / fail, resurrect am on tap ===
   const handleError = () => {
     setHasError(true);
   };
@@ -85,7 +88,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
 
   return (
     <div className="relative w-full bg-black group overflow-hidden">
-      {/* === TIKTOK POSTER: Show picture immediately, no black === */}
       {!isLoaded && poster && (
         <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
       )}
@@ -98,10 +100,10 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
       <video
         key={retryKey}
         ref={videoRef}
-        src={src}
+        src={isNear ? src : undefined}
         controls
         playsInline
-        preload="metadata"
+        preload="auto"
         poster={poster || undefined}
         onPlay={handlePlay}
         onError={handleError}
@@ -120,12 +122,10 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
         </button>
       )}
 
-      {/* WATERMARK PREVIEW - Like TikTok */}
       <div className="absolute bottom-10 left-2 z-20 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
 
-      {/* DOWNLOAD BUTTON */}
       <button
         onClick={async (e)=>{
           e.stopPropagation()
@@ -144,7 +144,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
         {isDownloading ? ` ${dlProgress}%` : " Download"}
       </button>
 
-      {/* LOADING BAR - Like that TikTok loader you sent */}
       {isDownloading && (
         <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 z-20">
           <div className="h-full bg-[#00a884] transition-all duration-200" style={{width: `${dlProgress}%`}}></div>
@@ -154,27 +153,50 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   )
 }
 
-// IFRAME - NO MORE "Processing..." - Hide Bunny processing with poster + Tap to play, like TikTok
+// IFRAME - TIKTOK PRELOAD: As you dey watch 1, next 2-3 don dey load for background. NO double text, NO Processing
 function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const savedSrc = useRef(src);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [showCover, setShowCover] = useState(true);
-  const [coverPoster, setCoverPoster] = useState<string>(posterUrl || "");
+  // FIXED: Old video (no poster) = no cover at all. New video (with poster) = show cover
+  const [showCover, setShowCover] = useState(!!posterUrl);
+  const [isNear, setIsNear] = useState(false);
+  const [isReady, setIsReady] = useState(false);
 
-  // If posterUrl change (new post from index.tsx), use am
   useEffect(() => {
-    if (posterUrl) setCoverPoster(posterUrl);
+    setShowCover(!!posterUrl);
   }, [posterUrl]);
 
-  // If no poster from index.tsx (old video), try to show fine loading - no Bunny processing text
+  // === TIKTOK PRELOAD: Start load when video dey 1000px away (2-3 videos under) ===
   useEffect(() => {
-    // Auto-hide cover after 25s so video go show even if person no tap - e go don ready by then
-    const t = setTimeout(() => setShowCover(false), 25000);
-    return () => clearTimeout(t);
-  }, [src]);
+    const wrap = wrapRef.current;
+    if (!wrap) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => {
+        if (entry.isIntersecting) setIsNear(true);
+      },
+      { threshold: 0, rootMargin: "1000px 0px 1000px 0px" }
+    );
+    obs.observe(wrap);
+    return () => obs.disconnect();
+  }, []);
 
+  // === AUTO HIDE COVER when iframe don load for background ===
+  useEffect(() => {
+    if (!isNear) return;
+    if (!posterUrl) {
+      setShowCover(false);
+      return;
+    }
+    const t = setTimeout(() => {
+      setIsReady(true);
+      setShowCover(false);
+    }, 1800);
+    return () => clearTimeout(t);
+  }, [isNear, posterUrl]);
+
+  // === PAUSE when comot for screen ===
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -188,7 +210,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
             iframe.src = "about:blank";
           }
         } else {
-          if (iframe.src === "about:blank") {
+          if (iframe.src === "about:blank" && isNear) {
             iframe.src = savedSrc.current;
           }
         }
@@ -197,38 +219,43 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
     );
     obs.observe(wrap);
     return () => obs.disconnect();
-  }, []);
+  }, [isNear]);
 
-  // === FIX: When you tap this iframe video, pause every other video/music ===
   const handleWrapClick = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
       try { (el as HTMLMediaElement).pause(); } catch {}
     });
+    setShowCover(false);
   };
 
   return (
     <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-black overflow-hidden" style={{ height: '380px' }}>
-      <iframe ref={iframeRef} src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen />
+      {isNear ? (
+        <iframe
+          ref={iframeRef}
+          src={src}
+          onLoad={() => setIsReady(true)}
+          className="w-full h-full"
+          style={{ border: 0, opacity: showCover ? 0 : 1 }}
+          allow="autoplay; fullscreen"
+          allowFullScreen
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
+        </div>
+      )}
 
-      {/* === COVER: Hide Bunny "Processing..." - Show poster + Tap to play === */}
-      {showCover && (
-        <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full flex-col items-center justify-center overflow-hidden bg-black text-white">
-          {coverPoster ? (
-            <img src={coverPoster} alt="" className="absolute inset-0 h-full w-full object-cover" />
-          ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
-              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
-              <p className="mt-3 text-sm font-bold">Video dey ready soon... ⏳</p>
-              <p className="mt-1 px-6 text-center text-[11px] text-white/60">Tap to play - e no be processing, na video dey load</p>
-            </div>
-          )}
-          {/* Fine message on top of poster - NOT Bunny processing */}
+      {/* COVER: ONLY new video with poster, 1 text only, go comot by itself when ready */}
+      {showCover && posterUrl && isNear && (
+        <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
+          <img src={posterUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
           <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
             <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 backdrop-blur">
               <Play className="ml-1 h-7 w-7 fill-white text-white" />
             </span>
             <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold backdrop-blur">
-              {coverPoster ? "Tap to play ▶" : "Video dey ready soon... ⏳"}
+              {isReady ? "Tap to play ▶" : "Loading..."}
             </span>
           </div>
         </button>
@@ -341,7 +368,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const videoUrl = (post as any).video_url as string | undefined;
   const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
   const authorName = author?.full_name || post.profiles?.full_name || "student";
-  // === ADDED: Poster from index.tsx - for 3-mins video, e go show picture, no Processing ===
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
   
   let imageUrls: string[] = [];
@@ -364,7 +390,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     document.querySelectorAll('audio, video').forEach(el => {
       if (el !== audioRef.current) (el as HTMLMediaElement).pause();
     });
-    // Kill Bunny iframes when music play
     document.querySelectorAll('iframe').forEach((f: any) => {
       if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
         try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
@@ -434,7 +459,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         <button onClick={onComments} className="flex items-center gap-1.5 text-sm font-medium">
           <MessageCircle className="h-6 w-6" /> {commentCount}
         </button>
-        {/* === REPOST LIKE TIKTOK - Join Like / Comment === */}
         <button onClick={handleRepost} disabled={reposting} className={`flex items-center gap-1.5 text-sm font-medium ${myReposted ? "text-green-600" : ""}`}>
           <Repeat2 className={`h-6 w-6 transition ${myReposted ? "text-green-600 scale-110" : ""}`} />
           {repostCount}
