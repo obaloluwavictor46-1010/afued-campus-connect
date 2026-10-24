@@ -1,6 +1,6 @@
 import { createFileRoute, useNavigate, Link } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
-import { Loader2, LogOut, Mail, Phone, Pencil, Shield, MapPin, GraduationCap, Share2, Camera, Repeat2 } from "lucide-react";
+import { Loader2, LogOut, Mail, Phone, Pencil, Shield, MapPin, GraduationCap, Share2, Camera, Repeat2, Heart } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { PostCard } from "@/components/PostCard";
@@ -26,6 +26,9 @@ function ProfilePage() {
   const [tab, setTab] = useState<"all" | "photos" | "reels" | "reposts">("all");
   const navigate = useNavigate();
   const p: any = profile;
+
+  // === ADDED: TOTAL LIKES ===
+  const [totalLikes, setTotalLikes] = useState(0);
 
   // === ADDED: REPOSTS LIKE TIKTOK ===
   const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
@@ -53,6 +56,23 @@ function ProfilePage() {
     }
   };
 
+  // === ADDED: TOTAL LIKES - Count all likes for all my posts ===
+  const loadTotalLikes = async (postIds: string[]) => {
+    if (postIds.length === 0) { setTotalLikes(0); return; }
+    // Try "likes" table first
+    const { data, error } = await supabase.from("likes").select("id").in("post_id", postIds);
+    if (!error && data) { setTotalLikes(data.length); return; }
+    // Fallback: try "post_likes" if your table name different
+    const { data: data2 } = await supabase.from("post_likes").select("id").in("post_id", postIds);
+    if (data2) { setTotalLikes(data2.length); return; }
+    // Fallback 2: if posts get likes_count column, sum am
+    const { data: postsData } = await supabase.from("posts").select("likes_count").in("id", postIds);
+    if (postsData) {
+      const sum = (postsData as any[]).reduce((a, b) => a + (b.likes_count || 0), 0);
+      setTotalLikes(sum);
+    }
+  };
+
   useEffect(() => {
     if (!user) return;
     (async () => {
@@ -63,6 +83,10 @@ function ProfilePage() {
         const m: Record<string, number> = {};
         (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
         setCounts(m);
+        // === ADDED: Load total likes for my posts ===
+        await loadTotalLikes(data.map((p) => p.id));
+      } else {
+        setTotalLikes(0);
       }
       const { count: f1 } = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("following_id", user.id);
       const { count: f2 } = await supabase.from("follows").select("*", { count: "exact", head: true }).eq("follower_id", user.id);
@@ -75,7 +99,14 @@ function ProfilePage() {
     const ch = supabase.channel(`my-reposts-${user.id}`)
       .on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `user_id=eq.${user.id}` }, () => loadReposts(user.id))
       .subscribe();
-    return () => { supabase.removeChannel(ch); };
+    // === ADDED: Live update Total Likes when person like/unlike my post ===
+    const ch2 = supabase.channel(`my-likes-${user.id}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "likes" }, async () => {
+        const { data: myPosts } = await supabase.from("posts").select("id").eq("user_id", user.id);
+        if (myPosts) await loadTotalLikes(myPosts.map((pp: any) => pp.id));
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(ch); supabase.removeChannel(ch2); };
   }, [user]);
 
   const logout = async () => { await supabase.auth.signOut(); navigate({ to: "/auth", replace: true }); };
@@ -128,9 +159,18 @@ function ProfilePage() {
           <h2 className="mt-3 font-display text-2xl font-extrabold">{profile?.full_name || "Student"}</h2>
           {profile?.faculty && <span className="mt-1 inline-block rounded-full bg-accent px-3 py-1 text-xs font-semibold">{profile.faculty}</span>}
           {p?.bio && <p className="mt-2 text-sm text-foreground">{p.bio}</p>}
+          {/* === CHANGED: Added Total Likes with Heart === */}
           <p className="mt-3 text-sm">
             <b>{followersCount}</b> <span className="text-muted-foreground">followers</span> • <b>{followingCount}</b> <span className="text-muted-foreground">following</span> • <b>{posts.length}</b> <span className="text-muted-foreground">posts</span> • <b>{repostCount}</b> <span className="text-muted-foreground">reposts</span>
           </p>
+          {/* === ADDED: Total Likes Big Card === */}
+          <div className="mt-3 flex items-center gap-2 rounded-2xl bg-red-50 border border-red-100 px-4 py-3">
+            <span className="flex h-9 w-9 items-center justify-center rounded-full bg-red-500 text-white"><Heart className="h-5 w-5 fill-white" /></span>
+            <div>
+              <p className="text-base font-extrabold leading-none">{totalLikes} Total Likes</p>
+              <p className="text-xs text-muted-foreground mt-0.5">All likes for all your posts, add together</p>
+            </div>
+          </div>
           <div className="mt-4 rounded-2xl border bg-muted/40 p-4 space-y-2 text-sm">
             <p className="font-bold">Details</p>
             <p className="flex items-center gap-2 text-muted-foreground"><MapPin className="h-4 w-4" /> Lives in {p?.location || "Akure"}</p>
@@ -212,4 +252,4 @@ function EditProfile({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-         }
+                                                                          }
