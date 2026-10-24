@@ -1,7 +1,7 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { ImagePlus, Loader2, Megaphone, Plus, Trash2, Lock } from "lucide-react";
+import { ImagePlus, Loader2, Megaphone, Plus, Trash2, Lock, Pin, PinOff } from "lucide-react";
 import { toast } from "sonner";
 import { AppShell, Avatar } from "@/components/AppShell";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
@@ -24,7 +24,7 @@ export const Route = createFileRoute("/announcements")({
   component: () => <AppShell title="Announcements"><Page /></AppShell>,
 });
 
-type A = { id: string; author_id: string; title: string; content: string | null; image_url: string | null; created_at: string };
+type A = { id: string; author_id: string; title: string; content: string | null; image_url: string | null; created_at: string; is_pinned?: boolean };
 
 function Page() {
   const { user, profile } = useAuth();
@@ -36,9 +36,12 @@ function Page() {
   const [showCodeDialog, setShowCodeDialog] = useState(false);
   const [codeInput, setCodeInput] = useState("");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [pinning, setPinning] = useState(false);
+  const [flashId, setFlashId] = useState<string | null>(null);
+  const itemRefs = useRef<Record<string, HTMLElement | null>>({});
   const load = async () => {
     setLoadError(null);
-    const { data, error } = await supabase.from("announcements").select("*").order("created_at", { ascending: false });
+    const { data, error } = await supabase.from("announcements").select("*").order("is_pinned", { ascending: false }).order("created_at", { ascending: false });
     if (error) { setLoadError(error.message); setList([]); setLoading(false); return; }
     setList((data ?? []) as A[]);
     setAuthors(await fetchProfiles((data ?? []).map((a: A) => a.author_id)));
@@ -53,6 +56,31 @@ function Page() {
     const { error } = await supabase.from("announcements").delete().eq("id", id);
     if (error) toast.error(error.message); else load();
   };
+  const togglePin = async (a: A) => {
+    if (pinning) return;
+    setPinning(true);
+    const newPinned = !a.is_pinned;
+    try {
+      if (newPinned) {
+        await supabase.from("announcements").update({ is_pinned: false }).eq("is_pinned", true);
+      }
+      const { error } = await supabase.from("announcements").update({ is_pinned: newPinned }).eq("id", a.id);
+      if (error) throw error;
+      toast.success(newPinned ? "📌 Pinned! E go stay for top" : "Unpinned");
+      await load();
+    } catch (e: any) {
+      if (e.code === "42703") toast.error("Run SQL first: ADD is_pinned column");
+      else toast.error(e.message || "Pin failed");
+    } finally { setPinning(false); }
+  };
+  const scrollToPinned = (id: string) => {
+    const el = itemRefs.current[id];
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setFlashId(id);
+      setTimeout(() => setFlashId(null), 2000);
+    }
+  };
   const handlePlusClick = () => {
     if (canPost) { setOpen(true); } else { setShowCodeDialog(true); }
   };
@@ -64,8 +92,25 @@ function Page() {
       setOpen(true);
     } else { toast.error("Wrong code! Try again"); }
   };
+  const pinned = list.find((a) => a.is_pinned);
   return (
     <div className="space-y-4 p-4">
+      {pinned && (
+        <button
+          onClick={() => scrollToPinned(pinned.id)}
+          className="flex w-full items-center gap-3 rounded-2xl border-2 border-amber-300 bg-amber-50 p-3 text-left shadow-sm active:scale-[0.99]"
+        >
+          <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-amber-400 text-white">
+            <Pin className="h-4 w-4 fill-white" />
+          </span>
+          <span className="min-w-0 flex-1">
+            <span className="block text-[11px] font-bold uppercase tracking-wide text-amber-700">📌 Pinned Announcement — Tap to view</span>
+            <span className="block truncate text-sm font-semibold text-zinc-900">{pinned.title}</span>
+            <span className="block truncate text-xs text-zinc-500">{pinned.content || "Tap to see full announcement"}</span>
+          </span>
+          <span className="shrink-0 text-xs font-bold text-amber-600">↓ View</span>
+        </button>
+      )}
       {loading ? (
         <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
       ) : loadError ? (
@@ -78,7 +123,16 @@ function Page() {
         <div className="py-16 text-center text-muted-foreground"><Megaphone className="mx-auto mb-3 h-10 w-10" />No announcements yet.</div>
       ) : (
         list.map((a) => (
-          <article key={a.id} className="overflow-hidden rounded-2xl border bg-card shadow-card">
+          <article
+            key={a.id}
+            ref={(el) => { itemRefs.current[a.id] = el; }}
+            className={`overflow-hidden rounded-2xl border bg-card shadow-card transition-all ${a.is_pinned ? "ring-2 ring-amber-400" : ""} ${flashId === a.id ? "ring-4 ring-amber-400 bg-amber-50" : ""}`}
+          >
+            {a.is_pinned && (
+              <div className="flex items-center gap-1.5 bg-amber-100 px-4 py-1.5 text-[11px] font-bold text-amber-800">
+                <Pin className="h-3 w-3 fill-amber-600 text-amber-600" /> Pinned Announcement
+              </div>
+            )}
             <div className="flex items-center gap-3 p-4">
               <Avatar url={authors[a.author_id]?.avatar_url} name={authors[a.author_id]?.full_name} />
               <div className="min-w-0 flex-1">
@@ -87,7 +141,12 @@ function Page() {
               </div>
               <span className="rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-foreground">Official</span>
               {(a.author_id === user?.id || profile?.is_admin) && (
-                <button onClick={() => remove(a.id)} className="p-1 text-muted-foreground" aria-label="Delete"><Trash2 className="h-4 w-4" /></button>
+                <>
+                  <button onClick={() => togglePin(a)} disabled={pinning} title={a.is_pinned ? "Unpin" : "Pin to top"} className={`rounded-full p-2 active:scale-95 ${a.is_pinned ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}>
+                    {a.is_pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                  </button>
+                  <button onClick={() => remove(a.id)} className="p-1 text-muted-foreground" aria-label="Delete"><Trash2 className="h-4 w-4" /></button>
+                </>
               )}
             </div>
             <h2 className="px-4 font-display text-lg font-bold">{a.title}</h2>
@@ -125,21 +184,18 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
   const [editorUrl, setEditorUrl] = useState<string | null>(null);
   const [editedFiles, setEditedFiles] = useState<File[]>([]);
   const [showEditorBtn, setShowEditorBtn] = useState(false);
-
   useEffect(() => {
     if (picker.files.length > 0) {
       const hasImage = picker.files.some((f: any) => f.type?.startsWith('image/') || f.type?.startsWith('video/'));
       setShowEditorBtn(hasImage);
     } else { setShowEditorBtn(false); }
   }, [picker.files]);
-
   function openEditorForFirstImage() {
     const img = picker.files.find((f: any) => f.type?.startsWith('image/') || f.type?.startsWith('video/'));
     if (!img) { toast.error("Pick picture / video first"); return; }
     setEditorFile(img);
     setEditorUrl(URL.createObjectURL(img));
   }
-
   function onEditorSend(editedDataUrl: string, captionFromEditor: string, editedFile?: File | null) {
     if (captionFromEditor) setF(prev => ({ ...prev, content: prev.content ? prev.content + " " + captionFromEditor : captionFromEditor }));
     if (editorFile?.type?.startsWith('video/')) {
@@ -160,7 +216,6 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
     }).catch(()=>{ toast.error("Edit failed, try again"); });
     setEditorUrl(null); setEditorFile(null);
   }
-
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!user) { toast.error("Login first"); return; }
@@ -174,11 +229,9 @@ function NewAnnouncement({ onClose, onDone }: { onClose: () => void; onDone: () 
       toast.success("Announcement posted ✅"); onDone(); onClose();
     } catch (err: any) { console.log(err); toast.error(err?.message || "Post failed - check internet / file size"); } finally { setBusy(false); setPct(null); }
   };
-
   if (editorUrl) {
     return <WhatsAppEditor imageUrl={editorUrl} isVideo={editorFile?.type?.startsWith('video/')} onCancel={() => { setEditorUrl(null); setEditorFile(null); }} onSend={onEditorSend} />;
   }
-
   return (
     <Dialog open onOpenChange={(o) => !o && !busy && onClose()}>
       <DialogContent className="max-h-[90dvh] max-w-md overflow-y-auto rounded-2xl">
@@ -253,14 +306,12 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
   const [cropRotate, setCropRotate] = useState(0);
   const [isBurning, setIsBurning] = useState(false);
   const [imgReady, setImgReady] = useState(false);
-
   useEffect(()=>{
     if(isVideo && videoRef.current){
       if(tool==='pen' || tool==='eraser' || tool==='text' || tool==='crop') videoRef.current.pause();
       else videoRef.current.play().catch(()=>{});
     }
   },[tool, isVideo]);
-
   useEffect(()=>{
     if(isVideo) return;
     setImgReady(false);
@@ -279,7 +330,6 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
     };
     img.onerror = ()=> setImgReady(true);
   },[currentImage, isVideo, tool]);
-
   function getPos(e:any){
     const el = isVideo ? videoRef.current : canvasRef.current;
     if(!el) return {x:0,y:0,clientX:0,clientY:0};
@@ -522,7 +572,6 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       onSend(canvas.toDataURL('image/jpeg',0.92), caption);
     }catch(e){ onSend(currentImage, caption); }
   }
-
   return (
     <div style={{position:'fixed', inset:0, background:'black', zIndex:9999, display:'flex', flexDirection:'column'}}>
       <div style={{display:'flex', justifyContent:'space-between', alignItems:'center', padding:'12px 16px'}}>
@@ -645,4 +694,4 @@ function WhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {!imgReady && !isVideo && <p style={{textAlign:'center', color:'#aaa', fontSize:11, background:'#000', padding:'4px'}}>Loading picture... wait small</p>}
     </div>
   );
-    }
+       }
