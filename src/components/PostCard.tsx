@@ -8,17 +8,13 @@ import { MediaGallery } from "./MediaView";
 import { downloadAFUEDVideoSimple, getBunnyStreamPosterUrl, getBunnyVideoId } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// ===== GLOBAL: Only 1 video / audio fit play at a time =====
+// ===== GLOBAL: Only 1 fit play =====
 function pauseAllOthers(except?: HTMLMediaElement | null) {
   document.querySelectorAll("video, audio").forEach((el: any) => {
     if (el !== except) { try { el.pause(); } catch {} }
   });
-  document.querySelectorAll("iframe").forEach((f: any) => {
-    try { f.contentWindow?.postMessage({ action: "pause" }, "*"); } catch {}
-  });
 }
 
-// ===== STEP 1: Build MP4 from video link itself =====
 function parseBunny(src: string) {
   if (!src.includes("iframe.mediadelivery.net")) return null;
   const parts = src.split("/");
@@ -34,130 +30,168 @@ function buildBunnyMp4(src: string, quality: string): string {
   return src;
 }
 
-function toPosterUrl(src: string, fallback: string): string {
+// ===== REAL FIX: Poster from Bunny link itself, no black =====
+function getPoster(src: string, fallback: string): string {
   if (fallback) return fallback;
   if (src.includes("iframe.mediadelivery.net")) {
-    const p = getBunnyStreamPosterUrl(src);
-    if (p) return p;
+    try {
+      const p = getBunnyStreamPosterUrl(src);
+      if (p) return p;
+    } catch {}
+    const parsed = parseBunny(src);
+    if (parsed) return `https://vz-${parsed.lib}.b-cdn.net/${parsed.id}/thumbnail.jpg`;
   }
   return "";
 }
 
-// ===== STEP 1 + 2 + 3: TikTokVideo =====
+// ===== PERFECT TikTokVideo: Poster-First, No Iframe Until Play, Unload = Stop =====
 function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [useIframe, setUseIframe] = useState(false);
+  const [started, setStarted] = useState(false);
+  const [useMp4, setUseMp4] = useState(false);
   const [qualityIndex, setQualityIndex] = useState(0);
   const [posterOk, setPosterOk] = useState(true);
 
   const isStream = src.includes("iframe.mediadelivery.net");
   const qualities = ["720p", "480p", "360p", "240p"];
   const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
-  const poster = toPosterUrl(src, posterUrl || "");
+  const poster = getPoster(src, posterUrl || "");
 
+  const stopAndShowPoster = () => {
+    try { videoRef.current?.pause(); } catch {}
+    if (started) setStarted(false);
+    setUseMp4(false);
+  };
+
+  // If another video start OR scroll comot, unload me -> back to picture
   useEffect(() => {
+    if (!started) return;
+    const onOtherStart = (e: any) => {
+      if (e.detail && e.detail.src !== src) stopAndShowPoster();
+    };
+    window.addEventListener("afued-video-start", onOtherStart as any);
+
     const onAnyPlay = (e: any) => {
-      const target = e.target as HTMLMediaElement;
-      const mine = videoRef.current;
-      if (!mine) return;
-      if (target === mine) {
-        document.querySelectorAll("video, audio").forEach((el: any) => {
-          if (el !== mine) { try { el.pause(); } catch {} }
-        });
-      } else {
-        if (!mine.paused) { try { mine.pause(); } catch {} }
-      }
+      if (e.target !== videoRef.current) stopAndShowPoster();
     };
     document.addEventListener("play", onAnyPlay, true);
-    return () => document.removeEventListener("play", onAnyPlay, true);
-  }, []);
 
-  useEffect(() => {
     const wrap = wrapRef.current;
-    if (!wrap) return;
-    const getVideo = () => videoRef.current;
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        const v = getVideo();
-        if (!v) return;
-        if (entry.intersectionRatio < 0.5 && !v.paused) {
-          try { v.pause(); } catch {}
-        }
-      },
-      { threshold: [0, 0.25, 0.5, 0.75, 1] }
-    );
-    obs.observe(wrap);
+    let obs: IntersectionObserver | null = null;
+    if (wrap) {
+      obs = new IntersectionObserver(
+        ([entry]) => { if (entry.intersectionRatio < 0.5) stopAndShowPoster(); },
+        { threshold: [0, 0.25, 0.5, 0.75, 1] }
+      );
+      obs.observe(wrap);
+    }
     const onScroll = () => {
-      const v = getVideo();
-      if (!v || v.paused) return;
+      if (!wrap) return;
       const rect = wrap.getBoundingClientRect();
-      const windowH = window.innerHeight;
-      const visibleTop = Math.max(rect.top, 0);
-      const visibleBottom = Math.min(rect.bottom, windowH);
-      const visibleHeight = visibleBottom - visibleTop;
-      const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
-      if (visibleRatio < 0.5) {
-        try { v.pause(); } catch {}
-      }
+      const h = window.innerHeight;
+      const visTop = Math.max(rect.top, 0);
+      const visBot = Math.min(rect.bottom, h);
+      const ratio = rect.height > 0 ? (visBot - visTop) / rect.height : 0;
+      if (ratio < 0.5) stopAndShowPoster();
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("touchmove", onScroll, { passive: true });
+
     return () => {
-      obs.disconnect();
+      window.removeEventListener("afued-video-start", onOtherStart as any);
+      document.removeEventListener("play", onAnyPlay, true);
+      if (obs) obs.disconnect();
       window.removeEventListener("scroll", onScroll);
       document.removeEventListener("touchmove", onScroll);
     };
-  }, [directSrc, useIframe]);
+    // eslint-disable-next-line
+  }, [src, started]);
 
-  const handleError = () => {
+  const handlePlay = () => {
+    pauseAllOthers(null);
+    window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src } }));
+    setUseMp4(true);
+    setStarted(true);
+  };
+
+  const handleMp4Error = () => {
     if (isStream && qualityIndex < qualities.length - 1) {
       setQualityIndex((i) => i + 1);
       return;
     }
-    if (isStream) {
-      setUseIframe(true);
-      return;
-    }
+    // Big video MP4 fail -> use iframe, but only NOW, not on login
+    setUseMp4(false);
   };
 
-  if (useIframe) {
-    return (
-      <div className="relative w-full bg-black overflow-hidden" style={{ height: 380 }}>
-        <iframe src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen title="AFUED Video" />
-        <button onClick={() => { setUseIframe(false); setQualityIndex(0); }} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[10px] px-2 py-1 rounded-full">
-          Try MP4 again
-        </button>
-      </div>
-    );
-  }
-
   return (
-    <div ref={wrapRef} className="relative w-full bg-black overflow-hidden">
-      <video
-        key={`${qualityIndex}`}
-        ref={videoRef}
-        src={directSrc}
-        poster={poster && posterOk ? poster : undefined}
-        playsInline
-        preload="metadata"
-        controls
-        onError={handleError}
-        onPlay={() => pauseAllOthers(videoRef.current)}
-        className="w-full max-h-[520px] min-h-[280px] bg-zinc-900 object-contain"
-      />
-      {!posterOk && (
-        <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-gradient-to-br from-[#00a884]/40 via-zinc-900 to-black">
-          <span className="text-[80px] font-black text-white/20">{authorName.charAt(0).toUpperCase()}</span>
+    <div ref={wrapRef} className="relative w-full bg-black overflow-hidden" style={{ minHeight: 380 }}>
+      {/* STATE 1: NOT STARTED - PICTURE ONLY, NO BLACK, NO IFRAME */}
+      {!started && (
+        <button onClick={handlePlay} className="relative block w-full text-left" style={{ height: 380 }}>
+          {poster && posterOk ? (
+            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" onError={() => setPosterOk(false)} />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-[#00a884] via-zinc-900 to-black">
+              <span className="text-[90px] font-black leading-none text-white/30">{authorName.charAt(0).toUpperCase()}</span>
+              <span className="mt-2 px-4 text-center text-sm font-bold text-white/80">@{authorName}</span>
+              <span className="text-xs text-white/50">Video dey inside - Tap to Play</span>
+            </div>
+          )}
+          <div className="absolute inset-0 bg-black/20" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#FF5A1F] shadow-xl ring-4 ring-white/20 active:scale-95">
+              <Play className="ml-1 h-8 w-8 fill-white text-white" />
+            </span>
+            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold text-white backdrop-blur">Tap to Play ▶</span>
+          </div>
+          <div className="absolute bottom-10 left-2 z-10 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+            AFUED • @{authorName} • afuedconnect
+          </div>
+          <span className="absolute bottom-2 left-2 z-10 rounded bg-black/60 px-2 py-1 text-[10px] font-bold text-white">▶ VIDEO</span>
+        </button>
+      )}
+
+      {/* STATE 2: STARTED + MP4 - Small 13s videos */}
+      {started && useMp4 && (
+        <div className="relative w-full">
+          <video
+            ref={videoRef}
+            key={`${qualityIndex}`}
+            src={directSrc}
+            poster={poster || undefined}
+            playsInline
+            preload="metadata"
+            controls
+            autoPlay
+            onError={handleMp4Error}
+            onPlay={() => pauseAllOthers(videoRef.current)}
+            className="w-full max-h-[520px] min-h-[280px] bg-black object-contain"
+          />
+          <button onClick={stopAndShowPoster} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">
+            ✕ Stop
+          </button>
         </div>
       )}
-      {poster && (
-        <img src={poster} alt="" className="hidden" onError={() => setPosterOk(false)} />
+
+      {/* STATE 3: STARTED + MP4 FAIL -> IFRAME - Big 2min videos */}
+      {started && !useMp4 && (
+        <div className="relative w-full" style={{ height: 380 }}>
+          <iframe
+            src={src + (src.includes("?") ? "&" : "?") + "autoplay=true"}
+            className="w-full h-full"
+            style={{ border: 0 }}
+            allow="autoplay; fullscreen"
+            allowFullScreen
+            title="AFUED Video"
+          />
+          <button onClick={stopAndShowPoster} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">
+            ✕ Stop - Back to Picture
+          </button>
+        </div>
       )}
-      <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
-        AFUED • @{authorName} • afuedconnect
-      </div>
+
       <button
         onClick={async (e) => {
           e.stopPropagation();
@@ -195,36 +229,40 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const authorName = author?.full_name || post.profiles?.full_name || "student";
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
-  // ===== STEP 4: 3-dot menu state =====
+  // ===== STEP 4: 3-dot menu - FIXED position so overflow-hidden no fit cut am =====
   const [menuOpen, setMenuOpen] = useState(false);
+  const [menuPos, setMenuPos] = useState({ top: 0, right: 16 });
   const [isEditing, setIsEditing] = useState(false);
   const [editText, setEditText] = useState(post.content || "");
   const [saving, setSaving] = useState(false);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
-  const menuRef = useRef<HTMLDivElement>(null);
+  const menuBtnRef = useRef<HTMLButtonElement>(null);
+
+  const openMenu = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (menuOpen) { setMenuOpen(false); return; }
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    setMenuPos({ top: r.bottom + 4, right: Math.max(8, window.innerWidth - r.right) });
+    setConfirmDelete(false);
+    setMenuOpen(true);
+  };
 
   useEffect(() => {
     if (!menuOpen) return;
-    const onDocClick = (e: any) => {
-      if (menuRef.current && !menuRef.current.contains(e.target)) {
-        setMenuOpen(false);
-        setConfirmDelete(false);
-      }
-    };
-    document.addEventListener("mousedown", onDocClick);
-    document.addEventListener("touchstart", onDocClick);
-    return () => {
-      document.removeEventListener("mousedown", onDocClick);
-      document.removeEventListener("touchstart", onDocClick);
-    };
+    const close = () => { setMenuOpen(false); setConfirmDelete(false); };
+    // Small delay so the same tap wey open menu no go close am immediately
+    const t = setTimeout(() => {
+      document.addEventListener("mousedown", close);
+      document.addEventListener("touchstart", close);
+    }, 100);
+    return () => { clearTimeout(t); document.removeEventListener("mousedown", close); document.removeEventListener("touchstart", close); };
   }, [menuOpen]);
 
   useEffect(() => { setIsPinned(!!post.is_pinned); }, [post.is_pinned]);
   useEffect(() => { setEditText(post.content || ""); }, [post.content]);
 
-  // ===== STEP 4: EDIT =====
   const saveEdit = async () => {
     if (saving) return;
     setSaving(true);
@@ -242,15 +280,12 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     } finally { setSaving(false); }
   };
 
-  // ===== STEP 4: DELETE - Press twice =====
   const handleDelete = async () => {
-    if (!confirmDelete) {
-      setConfirmDelete(true);
-      return;
-    }
+    if (!confirmDelete) { setConfirmDelete(true); return; }
     if (deleting) return;
     setDeleting(true);
     try {
+      window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src: "delete-" + post.id } }));
       try { document.querySelectorAll("video, audio").forEach((el: any) => el.pause()); } catch {}
       const { error } = await supabase.from("posts").delete().eq("id", post.id);
       if (error) throw error;
@@ -264,7 +299,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     } finally { setDeleting(false); setMenuOpen(false); setConfirmDelete(false); }
   };
 
-  // ===== STEP 4: SHARE / COPY LINK =====
   const postLink = `${window.location.origin}/post/${post.id}`;
   const copyLink = async () => {
     try {
@@ -398,6 +432,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     if (!audio) return;
     const onAudioPlay = () => {
       document.querySelectorAll("video").forEach((v: any) => { try { v.pause(); } catch {} });
+      window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src: "music-" + post.id } }));
       setPlaying(true);
     };
     const onAudioPause = () => setPlaying(false);
@@ -413,12 +448,11 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       const audio = audioRef.current;
       if (!audio || audio.paused) return;
       const rect = card.getBoundingClientRect();
-      const windowH = window.innerHeight;
-      const visibleTop = Math.max(rect.top, 0);
-      const visibleBottom = Math.min(rect.bottom, windowH);
-      const visibleHeight = visibleBottom - visibleTop;
-      const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
-      if (visibleRatio < 0.3) { audio.pause(); setPlaying(false); }
+      const h = window.innerHeight;
+      const visTop = Math.max(rect.top, 0);
+      const visBot = Math.min(rect.bottom, h);
+      const ratio = rect.height > 0 ? (visBot - visTop) / rect.height : 0;
+      if (ratio < 0.3) { audio.pause(); setPlaying(false); }
     };
     const obs = new IntersectionObserver(
       ([entry]) => {
@@ -481,86 +515,62 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
             {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
           </button>
         )}
-
-        {/* ===== STEP 4: 3-DOT MENU ===== */}
-        <div ref={menuRef} className="relative shrink-0">
-          <button
-            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); setConfirmDelete(false); }}
-            className="rounded-full p-2 hover:bg-zinc-100 active:scale-95 active:bg-zinc-200"
-            title="More"
-          >
-            <MoreVertical className="h-5 w-5 text-zinc-600" />
-          </button>
-
-          {menuOpen && (
-            <div className="absolute right-0 top-10 z-50 w-56 overflow-hidden rounded-xl border bg-white shadow-xl">
-              {isOwnPost && (
-                <>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); setIsEditing(true); setMenuOpen(false); setEditText(post.content || ""); }}
-                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
-                  >
-                    <Pencil className="h-4 w-4 text-zinc-600" /> Edit Post
-                  </button>
-                  <button
-                    onClick={(e) => { e.stopPropagation(); handleDelete(); }}
-                    className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium active:bg-red-50 ${confirmDelete ? "bg-red-50 text-red-700 font-bold" : "text-red-600 hover:bg-red-50"}`}
-                  >
-                    <Trash2 className="h-4 w-4" />
-                    {deleting ? "Deleting..." : confirmDelete ? "⚠️ Tap again to DELETE" : "Delete Post"}
-                  </button>
-                  {confirmDelete && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
-                      className="w-full px-4 py-2 text-center text-xs text-zinc-500 hover:bg-zinc-50"
-                    >
-                      Cancel - No delete
-                    </button>
-                  )}
-                  <div className="h-px bg-zinc-100" />
-                </>
-              )}
-              <button
-                onClick={(e) => { e.stopPropagation(); sharePost(); }}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
-              >
-                <Share2 className="h-4 w-4 text-zinc-600" /> Share Post
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); copyLink(); }}
-                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
-              >
-                <Link2 className="h-4 w-4 text-zinc-600" /> Copy Link
-              </button>
-              <button
-                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }}
-                className="flex w-full items-center justify-center gap-1 px-4 py-2.5 text-center text-xs text-zinc-400 hover:bg-zinc-50"
-              >
-                <X className="h-3 w-3" /> Close
-              </button>
-            </div>
-          )}
-        </div>
+        <button
+          ref={menuBtnRef}
+          onClick={openMenu}
+          className="shrink-0 rounded-full p-2 hover:bg-zinc-100 active:scale-95 active:bg-zinc-200"
+          title="More"
+        >
+          <MoreVertical className="h-5 w-5 text-zinc-600" />
+        </button>
       </div>
 
-      {/* ===== STEP 4: EDIT BOX ===== */}
+      {/* ===== FIXED MENU - No card go cut am again ===== */}
+      {menuOpen && (
+        <div
+          className="fixed z-[9999] w-56 overflow-hidden rounded-xl border bg-white shadow-2xl"
+          style={{ top: menuPos.top, right: menuPos.right }}
+          onClick={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+        >
+          {isOwnPost && (
+            <>
+              <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); setMenuOpen(false); setEditText(post.content || ""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100">
+                <Pencil className="h-4 w-4 text-zinc-600" /> Edit Post
+              </button>
+              <button onClick={(e) => { e.stopPropagation(); handleDelete(); }} className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium ${confirmDelete ? "bg-red-50 text-red-700 font-bold" : "text-red-600 hover:bg-red-50"}`}>
+                <Trash2 className="h-4 w-4" />
+                {deleting ? "Deleting..." : confirmDelete ? "⚠️ Tap again to DELETE" : "Delete Post"}
+              </button>
+              {confirmDelete && (
+                <button onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }} className="w-full px-4 py-2 text-center text-xs text-zinc-500 hover:bg-zinc-50">
+                  Cancel - No delete
+                </button>
+              )}
+              <div className="h-px bg-zinc-100" />
+            </>
+          )}
+          <button onClick={(e) => { e.stopPropagation(); sharePost(); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100">
+            <Share2 className="h-4 w-4 text-zinc-600" /> Share Post
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); copyLink(); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100">
+            <Link2 className="h-4 w-4 text-zinc-600" /> Copy Link
+          </button>
+          <button onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }} className="flex w-full items-center justify-center gap-1 px-4 py-2.5 text-center text-xs text-zinc-400 hover:bg-zinc-50">
+            <X className="h-3 w-3" /> Close
+          </button>
+        </div>
+      )}
+
       {isEditing ? (
         <div className="mx-4 mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
           <p className="mb-2 text-xs font-bold">✏️ Edit your post:</p>
-          <textarea
-            value={editText}
-            onChange={(e) => setEditText(e.target.value)}
-            rows={3}
-            className="w-full rounded-lg border bg-white p-2.5 text-[15px] outline-none focus:border-primary"
-            placeholder="Write something..."
-          />
+          <textarea value={editText} onChange={(e) => setEditText(e.target.value)} rows={3} className="w-full rounded-lg border bg-white p-2.5 text-[15px] outline-none focus:border-primary" placeholder="Write something..." />
           <div className="mt-2 flex gap-2">
             <button onClick={saveEdit} disabled={saving} className="flex flex-1 items-center justify-center gap-1 rounded-full bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
               <Check className="h-4 w-4" /> {saving ? "Saving..." : "Save"}
             </button>
-            <button onClick={() => { setIsEditing(false); setEditText(post.content || ""); }} className="flex-1 rounded-full bg-zinc-200 px-4 py-2 text-sm font-bold">
-              Cancel
-            </button>
+            <button onClick={() => { setIsEditing(false); setEditText(post.content || ""); }} className="flex-1 rounded-full bg-zinc-200 px-4 py-2 text-sm font-bold">Cancel</button>
           </div>
         </div>
       ) : (
@@ -609,4 +619,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-}
+    }
