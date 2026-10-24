@@ -7,7 +7,7 @@ import { PostCard } from "@/components/PostCard";
 import { CommentsSheet } from "@/components/CommentsSheet";
 import { UploadBar, useMediaPicker } from "@/components/MediaView";
 import { FEED_CHANNELS, fetchProfiles, MAX_POSTS_PER_DAY, shortFaculty, supabase, type Post, type Profile } from "@/lib/supabase";
-import { uploadToBunny } from "@/lib/bunny";
+import { uploadToBunnyStorage } from "@/lib/bunnyStorage";
 import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/")({
@@ -145,8 +145,7 @@ function FeedInner() {
     if (!editingPost || !editContent.trim()) return;
     const { error } = await supabase.from("posts").update({ content: editContent.trim() }).eq("id", editingPost.id);
     if (error) toast.error(error.message);
-    else { toast.success("Post updated!"); setPosts((prev) => prev.map(p => p.id === editingPost.id ? { ...p, content: editContent.trim() } : p)); setEditingPost(null); }
-    setOpenMenu(null);
+    else { toast.success("Post updated!"); setPosts((prev) => prev.map(p => p.id === editingPost.id ? { ...p, content: editContent.trim() } : p)); setEditingPost(null); setOpenMenu(null); }
   };
 
   const handleShare = async (post: Post) => {
@@ -251,7 +250,6 @@ function FeedInner() {
                   <button onClick={() => setOpenPost(p.id)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">💬 {counts[p.id] ?? 0}</button>
                   <button onClick={() => handleShare(p)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">↗ Share</button>
                 </div>
-                {/* NO Uploading bar here again - upload dey run for background silently */}
               </div>
             );
           })
@@ -299,7 +297,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   function openEditorForFirstImage() {
     const img = picker.files.find((f: any) => f.type?.startsWith('image/') || f.type?.startsWith('video/'));
     if (!img) return;
-    // VIDEO: No editor burn again. Just post original video sharp. Editor na for picture only now.
     if (img.type?.startsWith('video/')) { toast.success("Video ready! Press Post - no need edit, e go upload fast 🎬"); return; }
     setEditorFile(img);
     setEditorUrl(URL.createObjectURL(img));
@@ -331,7 +328,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     let localVideo = "";
     let localMusic = "";
     const blobUrls: string[] = [];
-    // NO poster generation - Bunny go give thumbnail.jpg
     for (const f of filesToUpload) {
       const blobUrl = URL.createObjectURL(f);
       blobUrls.push(blobUrl);
@@ -363,7 +359,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         const type = file.type || "";
         const isMusic = type.startsWith("audio/") || name.endsWith(".mp3") || name.endsWith(".m4a") || name.endsWith(".ogg") || name.endsWith(".wav");
         const isVideo = type.startsWith("video/");
-        const url = await uploadToBunny(file, isMusic ? "music" : isVideo ? "videos" : "images", (p) => { setPct(p); });
+        const url = await uploadToBunnyStorage(file, isMusic ? "music" : isVideo ? "videos" : "images", (p) => { setPct(p); });
         if (isMusic) music_url = url; else if (isVideo) video_url = url; else image_urls.push(url);
       }
       const { data, error } = await supabase.from("posts").insert({
@@ -428,7 +424,6 @@ async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   return canvas.toDataURL("image/jpeg", 0.9);
 }
 
-// SIMPLIFIED EDITOR - Picture only, NO video burning. Fast, no hang.
 function FeedWhatsAppEditor({ imageUrl, onCancel, onSend }: any) {
   const canvasRef = useRef<any>(null);
   const [tool, setTool] = useState<'pen' | 'eraser' | 'crop' | 'text'>('pen');
@@ -565,4 +560,4 @@ function FeedWhatsAppEditor({ imageUrl, onCancel, onSend }: any) {
       </div>
     </div>
   );
-  }
+    }
