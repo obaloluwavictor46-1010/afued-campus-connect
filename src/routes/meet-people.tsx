@@ -1,4 +1,4 @@
-import { createFileRoute, Link, useNavigate } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState } from "react";
 import { Search, UserPlus, UserCheck, MessageCircle, Users } from "lucide-react";
 import { toast } from "sonner";
@@ -87,12 +87,14 @@ function MeetPeopleInner() {
     } finally { setBusyId(null); }
   };
 
+  // FIXED: No more /messages, no more ?user= -> No more 404
   const handleMessage = (targetId: string) => {
     if (!myFollowing.has(targetId)) {
       toast.error("Follow am first before you fit message am");
       return;
     }
-    navigate({ to: "/messages" as any, search: { user: targetId } as any });
+    localStorage.setItem("afued-chat-with", targetId);
+    navigate({ to: "/chat" as any });
   };
 
   const filtered = allProfiles.filter((p) => {
@@ -133,7 +135,8 @@ function MeetPeopleInner() {
             const c = followCounts[p.id] || { followers: 0, following: 0 };
             return (
               <div key={p.id} className="flex items-center gap-3 rounded-2xl border bg-card p-3 shadow-card">
-                <Link to="/u/$userId" params={{ userId: p.id }} className="flex min-w-0 flex-1 items-center gap-3">
+                {/* FIXED: No more Link to /u/$userId - that route no exist, na why e dey 404. Now na just div, no 404 */}
+                <div className="flex min-w-0 flex-1 items-center gap-3">
                   <Avatar url={p.avatar_url} name={p.full_name} />
                   <div className="min-w-0 flex-1">
                     <p className="truncate font-semibold">{p.full_name || "AFUED Student"}</p>
@@ -142,7 +145,7 @@ function MeetPeopleInner() {
                     {followsYou && !isFollowing && <span className="text-[11px] font-bold text-green-600">Follows you • Follow Back</span>}
                     {followsYou && isFollowing && <span className="text-[11px] font-bold text-green-600">You follow each other ✓</span>}
                   </div>
-                </Link>
+                </div>
                 <div className="flex shrink-0 flex-col gap-2">
                   <button onClick={() => toggleFollow(p.id)} disabled={busyId === p.id} className={`flex items-center gap-1 rounded-full px-4 py-2 text-xs font-bold ${isFollowing ? "border border-green-200 bg-green-100 text-green-700" : "bg-primary text-white"}`}>
                     {isFollowing ? <><UserCheck className="h-4 w-4" /> Following</> : <><UserPlus className="h-4 w-4" /> {followsYou ? "Follow Back" : "Follow"}</>}
