@@ -155,75 +155,39 @@ function FeedInner() {
     } finally { setRepostingId(null); }
   };
 
-  // === FIX 3: Only 1 video play + PAUSE when scroll comot ===
+  // === STRONG WATCHDOG - NO SUPABASE NEEDED ===
+  // 1. Scroll comot video -> pause + sound stop
+  // 2. Tap second video -> first pause
   useEffect(() => {
+    const pauseOffScreen = () => {
+      document.querySelectorAll("video").forEach((v: any) => {
+        const r = v.getBoundingClientRect();
+        const visibleHeight = Math.min(r.bottom, window.innerHeight) - Math.max(r.top, 0);
+        const visibleRatio = r.height > 0 ? visibleHeight / r.height : 0;
+        if (visibleRatio < 0.5 && !v.paused) {
+          try { v.pause(); } catch {}
+        }
+      });
+    };
     const stopOthers = (e: any) => {
       const target = e.target as HTMLVideoElement;
       if (!target || target.tagName !== "VIDEO") return;
       document.querySelectorAll("video").forEach((v: any) => {
-        if (v !== target) { try { v.pause(); } catch {} }
+        if (v !== target && !v.paused) { try { v.pause(); } catch {} }
       });
     };
     document.addEventListener("play", stopOthers, true);
-    const onScroll = () => {
-      document.querySelectorAll("video").forEach((v: any) => {
-        const r = v.getBoundingClientRect();
-        const visible = r.top < window.innerHeight * 0.8 && r.bottom > window.innerHeight * 0.2;
-        if (!visible && !v.paused) { try { v.pause(); } catch {} }
-      });
-    };
-    window.addEventListener("scroll", onScroll, { passive: true });
+    const watchdog = setInterval(pauseOffScreen, 300);
+    window.addEventListener("scroll", pauseOffScreen, { passive: true });
+    document.addEventListener("touchmove", pauseOffScreen, { passive: true });
+    document.addEventListener("scroll", pauseOffScreen, true);
     return () => {
       document.removeEventListener("play", stopOthers, true);
-      window.removeEventListener("scroll", onScroll);
+      clearInterval(watchdog);
+      window.removeEventListener("scroll", pauseOffScreen);
+      document.removeEventListener("touchmove", pauseOffScreen);
+      document.removeEventListener("scroll", pauseOffScreen, true);
     };
-  }, []);
-
-  useEffect(() => {
-    const obs = new IntersectionObserver((entries) => {
-      entries.forEach((en) => {
-        if (!en.isIntersecting) {
-          const v = en.target as HTMLVideoElement;
-          try { v.pause(); } catch {}
-        }
-      });
-    }, { threshold: 0.5 });
-    const patchVideos = () => {
-      document.querySelectorAll("video").forEach((v: any) => {
-        if (!v.getAttribute("data-patched")) {
-          v.setAttribute("data-patched", "1");
-          v.preload = "metadata";
-          try { (v as any).playsInline = true; } catch {}
-          try {
-            if (v.src && !v.src.includes("#t=") && v.src.startsWith("http")) {
-              const cleanSrc = v.src.split("#")[0];
-              v.setAttribute("data-original-src", cleanSrc);
-              v.poster = v.poster || "";
-            }
-          } catch {}
-          obs.observe(v);
-          v.addEventListener("error", () => {
-            if (!v.getAttribute("data-retried")) {
-              v.setAttribute("data-retried", "1");
-              const src = v.currentSrc || v.src;
-              if (src) {
-                setTimeout(() => { try { v.src = src; v.load(); } catch {} }, 800);
-              }
-            }
-          });
-          v.addEventListener("click", () => {
-            if (v.readyState === 0 || v.networkState === 3) {
-              try { v.load(); } catch {}
-            }
-          });
-        }
-      });
-    };
-    patchVideos();
-    const mo = new MutationObserver(patchVideos);
-    mo.observe(document.body, { childList: true, subtree: true });
-    const timer = setInterval(patchVideos, 1500);
-    return () => { mo.disconnect(); clearInterval(timer); obs.disconnect(); };
   }, []);
 
   const load = async () => {
@@ -346,7 +310,6 @@ function FeedInner() {
                   <div className="h-full w-full animate-pulse bg-primary" style={{ width: `${(p as any).uploadPct || 30}%` }} />
                 </div>
               )}
-              {/* FIX 2: DELETED the big black Processing overlay wey dey cover video face. Video itself go show now. */}
               <div className="absolute right-3 top-3 z-10">
                 <button
                   onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === p.id ? null : p.id); }}
@@ -394,7 +357,6 @@ function FeedInner() {
                 <button onClick={() => setOpenPost(p.id)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">💬 {counts[p.id] ?? 0}</button>
                 <button onClick={() => handleShare(p)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">↗ Share</button>
               </div>
-              {/* FIX 2: Progress UNDER video, no cover face again */}
               {(p as any).isUploading && (
                 <div className="px-4 pb-3">
                   <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
@@ -565,15 +527,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         else if (isVideo) video_url = url;
         else image_urls.push(url);
       }
-      // === FIX 1: Upload poster to Bunny so e no loss after 100% ===
-      let finalPoster = "";
-      if (localPoster) {
-        try {
-          const blob = await fetch(localPoster).then(r => r.blob());
-          const posterFile = new File([blob], `poster-${Date.now()}.jpg`, { type: "image/jpeg" });
-          finalPoster = await uploadToBunny(posterFile, "images", () => {});
-        } catch { finalPoster = ""; }
-      }
+      // NO SUPABASE POSTER - removed. Poster only for temp post, real video go show face from #t=0.5 for PostCard
       const { data, error } = await supabase.from("posts").insert({
         user_id: user.id,
         content: savedContent,
@@ -582,8 +536,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         image_url: image_urls[0] || "",
         music_url: music_url,
         video_url: video_url,
-        poster_url: finalPoster,
-        thumbnail_url: finalPoster,
       } as any).select().single();
       if (error) throw error;
       onOptimisticReplace(tempId, { ...data, uploadPct: 100, isUploading: false });
@@ -835,7 +787,7 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       next.x = box.x + dxPct; next.y = box.y + dyPct;
       if(next.x < 0) next.x = 0; if(next.y < 0) next.y = 0;
       if(next.x + next.w > 100) next.x = 100 - next.w;
-      if(next.y + next.h > 100) next.y = 100 - next.h;
+      if(next.y + next.h > 100) next.y = 100 - next.y;
     } else {
       if(handle.includes('l')){ next.x = box.x + dxPct; next.w = box.w - dxPct; }
       if(handle.includes('r')){ next.w = box.w + dxPct; }
@@ -1082,4 +1034,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-      }
+                                  }
