@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2, Pin, PinOff } from "lucide-react";
+import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2, Pin, PinOff, MoreVertical, Pencil, Trash2, Share2, Link2, X, Check } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar } from "./AppShell";
 import { shortFaculty, supabase, type Profile } from "@/lib/supabase";
@@ -57,7 +57,6 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
   const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
   const poster = toPosterUrl(src, posterUrl || "");
 
-  // ===== STEP 2: Only 1 fit play =====
   useEffect(() => {
     const onAnyPlay = (e: any) => {
       const target = e.target as HTMLMediaElement;
@@ -75,19 +74,14 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
     return () => document.removeEventListener("play", onAnyPlay, true);
   }, []);
 
-  // ===== STEP 3 MAIN FIX: Scroll comot = Stop, even if next post na picture =====
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const getVideo = () => videoRef.current;
-
-    // Check 1: Observer - if less than 50% visible, pause
     const obs = new IntersectionObserver(
       ([entry]) => {
         const v = getVideo();
         if (!v) return;
-        // intersectionRatio = how much dey show (0 to 1)
-        // If e less than 0.5 (half), pause am
         if (entry.intersectionRatio < 0.5 && !v.paused) {
           try { v.pause(); } catch {}
         }
@@ -95,9 +89,6 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
       { threshold: [0, 0.25, 0.5, 0.75, 1] }
     );
     obs.observe(wrap);
-
-    // Check 2: Scroll + Touch backup - catch "second post na picture" case
-    // This one no dey wait for observer, e dey check as you dey scroll
     const onScroll = () => {
       const v = getVideo();
       if (!v || v.paused) return;
@@ -113,7 +104,6 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("touchmove", onScroll, { passive: true });
-
     return () => {
       obs.disconnect();
       window.removeEventListener("scroll", onScroll);
@@ -184,7 +174,7 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
   );
 }
 
-export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
+export function PostCard({ post, author, commentCount, onComments, onDeleted }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void; onDeleted?: () => void }) {
   const { user } = useAuth();
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
@@ -200,13 +190,110 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const postOwnerId = post.user_id || post.author_id || post.profiles?.id || author?.id;
   const isOwnPost = !!user?.id && !!postOwnerId && user.id === postOwnerId;
 
-  // FIX: Define musicUrl / videoUrl early, before any useEffect use am
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
   const authorName = author?.full_name || post.profiles?.full_name || "student";
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
+  // ===== STEP 4: 3-dot menu state =====
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [isEditing, setIsEditing] = useState(false);
+  const [editText, setEditText] = useState(post.content || "");
+  const [saving, setSaving] = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [isDeleted, setIsDeleted] = useState(false);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const onDocClick = (e: any) => {
+      if (menuRef.current && !menuRef.current.contains(e.target)) {
+        setMenuOpen(false);
+        setConfirmDelete(false);
+      }
+    };
+    document.addEventListener("mousedown", onDocClick);
+    document.addEventListener("touchstart", onDocClick);
+    return () => {
+      document.removeEventListener("mousedown", onDocClick);
+      document.removeEventListener("touchstart", onDocClick);
+    };
+  }, [menuOpen]);
+
   useEffect(() => { setIsPinned(!!post.is_pinned); }, [post.is_pinned]);
+  useEffect(() => { setEditText(post.content || ""); }, [post.content]);
+
+  // ===== STEP 4: EDIT =====
+  const saveEdit = async () => {
+    if (saving) return;
+    setSaving(true);
+    try {
+      const { error } = await supabase.from("posts").update({ content: editText }).eq("id", post.id);
+      if (error) throw error;
+      post.content = editText;
+      setIsEditing(false);
+      setMenuOpen(false);
+      toast.success("Post updated ✅");
+    } catch (e: any) {
+      console.log("EDIT ERROR:", e);
+      if (e.code === "42501") toast.error("Policy block edit (42501) - run posts policy SQL");
+      else toast.error(`Edit failed: ${e.message || "Unknown"}`);
+    } finally { setSaving(false); }
+  };
+
+  // ===== STEP 4: DELETE - Press twice =====
+  const handleDelete = async () => {
+    if (!confirmDelete) {
+      setConfirmDelete(true);
+      return;
+    }
+    if (deleting) return;
+    setDeleting(true);
+    try {
+      try { document.querySelectorAll("video, audio").forEach((el: any) => el.pause()); } catch {}
+      const { error } = await supabase.from("posts").delete().eq("id", post.id);
+      if (error) throw error;
+      toast.success("Post deleted 🗑️");
+      setIsDeleted(true);
+      if (onDeleted) onDeleted();
+    } catch (e: any) {
+      console.log("DELETE ERROR:", e);
+      if (e.code === "42501") toast.error("Policy block delete (42501) - run posts policy SQL");
+      else toast.error(`Delete failed: ${e.message || "Unknown"}`);
+    } finally { setDeleting(false); setMenuOpen(false); setConfirmDelete(false); }
+  };
+
+  // ===== STEP 4: SHARE / COPY LINK =====
+  const postLink = `${window.location.origin}/post/${post.id}`;
+  const copyLink = async () => {
+    try {
+      await navigator.clipboard.writeText(postLink);
+      toast.success("Link copied! Send am to anybody");
+    } catch {
+      const ta = document.createElement("textarea");
+      ta.value = postLink;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      toast.success("Link copied!");
+    }
+    setMenuOpen(false);
+  };
+
+  const sharePost = async () => {
+    if ((navigator as any).share) {
+      try {
+        await (navigator as any).share({ title: "AFUED Connect", text: post.content || "Check this post", url: postLink });
+        setMenuOpen(false);
+        return;
+      } catch {}
+    }
+    copyLink();
+  };
+
+  if (isDeleted) return null;
 
   const loadLikes = async () => {
     const { data, error } = await supabase.from("likes").select("id, user_id").eq("post_id", post.id);
@@ -306,7 +393,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     } finally { setReposting(false); }
   };
 
-  // STEP 2: Music audio join only-1-play rule
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -320,7 +406,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => { audio.removeEventListener("play", onAudioPlay); audio.removeEventListener("pause", onAudioPause); };
   }, [musicUrl]);
 
-  // STEP 3 for MUSIC too: scroll comot card = music stop, even if next post na picture
   useEffect(() => {
     const card = cardRef.current;
     if (!card) return;
@@ -372,7 +457,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   };
 
   return (
-    <article ref={cardRef} className={`overflow-hidden rounded-2xl border bg-card shadow-card ${isPinned ? "ring-2 ring-amber-400/60" : ""}`}>
+    <article ref={cardRef} className={`relative overflow-hidden rounded-2xl border bg-card shadow-card ${isPinned ? "ring-2 ring-amber-400/60" : ""}`}>
       {isPinned && (
         <div className="flex items-center gap-1.5 bg-amber-50 px-4 py-1.5 text-[11px] font-bold text-amber-700">
           <Pin className="h-3 w-3 fill-amber-500 text-amber-500" /> Pinned Post
@@ -396,8 +481,92 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
             {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
           </button>
         )}
+
+        {/* ===== STEP 4: 3-DOT MENU ===== */}
+        <div ref={menuRef} className="relative shrink-0">
+          <button
+            onClick={(e) => { e.stopPropagation(); setMenuOpen(!menuOpen); setConfirmDelete(false); }}
+            className="rounded-full p-2 hover:bg-zinc-100 active:scale-95 active:bg-zinc-200"
+            title="More"
+          >
+            <MoreVertical className="h-5 w-5 text-zinc-600" />
+          </button>
+
+          {menuOpen && (
+            <div className="absolute right-0 top-10 z-50 w-56 overflow-hidden rounded-xl border bg-white shadow-xl">
+              {isOwnPost && (
+                <>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); setIsEditing(true); setMenuOpen(false); setEditText(post.content || ""); }}
+                    className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
+                  >
+                    <Pencil className="h-4 w-4 text-zinc-600" /> Edit Post
+                  </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); handleDelete(); }}
+                    className={`flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium active:bg-red-50 ${confirmDelete ? "bg-red-50 text-red-700 font-bold" : "text-red-600 hover:bg-red-50"}`}
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    {deleting ? "Deleting..." : confirmDelete ? "⚠️ Tap again to DELETE" : "Delete Post"}
+                  </button>
+                  {confirmDelete && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setConfirmDelete(false); }}
+                      className="w-full px-4 py-2 text-center text-xs text-zinc-500 hover:bg-zinc-50"
+                    >
+                      Cancel - No delete
+                    </button>
+                  )}
+                  <div className="h-px bg-zinc-100" />
+                </>
+              )}
+              <button
+                onClick={(e) => { e.stopPropagation(); sharePost(); }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
+              >
+                <Share2 className="h-4 w-4 text-zinc-600" /> Share Post
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); copyLink(); }}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100"
+              >
+                <Link2 className="h-4 w-4 text-zinc-600" /> Copy Link
+              </button>
+              <button
+                onClick={(e) => { e.stopPropagation(); setMenuOpen(false); }}
+                className="flex w-full items-center justify-center gap-1 px-4 py-2.5 text-center text-xs text-zinc-400 hover:bg-zinc-50"
+              >
+                <X className="h-3 w-3" /> Close
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-      {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
+
+      {/* ===== STEP 4: EDIT BOX ===== */}
+      {isEditing ? (
+        <div className="mx-4 mb-3 rounded-xl border-2 border-primary/30 bg-primary/5 p-3">
+          <p className="mb-2 text-xs font-bold">✏️ Edit your post:</p>
+          <textarea
+            value={editText}
+            onChange={(e) => setEditText(e.target.value)}
+            rows={3}
+            className="w-full rounded-lg border bg-white p-2.5 text-[15px] outline-none focus:border-primary"
+            placeholder="Write something..."
+          />
+          <div className="mt-2 flex gap-2">
+            <button onClick={saveEdit} disabled={saving} className="flex flex-1 items-center justify-center gap-1 rounded-full bg-primary px-4 py-2 text-sm font-bold text-white disabled:opacity-50">
+              <Check className="h-4 w-4" /> {saving ? "Saving..." : "Save"}
+            </button>
+            <button onClick={() => { setIsEditing(false); setEditText(post.content || ""); }} className="flex-1 rounded-full bg-zinc-200 px-4 py-2 text-sm font-bold">
+              Cancel
+            </button>
+          </div>
+        </div>
+      ) : (
+        post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>
+      )}
+
       <div className="relative">
         <MediaGallery urls={imageUrls} />
         {musicUrl && imageUrls.length > 0 && (
@@ -440,4 +609,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-            }
+}
