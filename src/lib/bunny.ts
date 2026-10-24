@@ -1,4 +1,4 @@
-// FINAL BUNNY.TS - AFUED - 0-45s INSTANT + WhatsApp FAST COMPRESS + 3 MINS MAX + TIKTOK WATERMARK DOWNLOAD
+// FINAL BUNNY.TS - AFUED - 0-45s INSTANT + WhatsApp FAST + 3 MINS MAX + TIKTOK WATERMARK DOWNLOAD + NO BLACK + NO SLOW COMPRESS + NO PROCESSING TEXT
 // Copy everything comot old one, paste this
 
 const BUNNY_ENDPOINT = import.meta.env.VITE_BUNNY_ENDPOINT;
@@ -28,10 +28,69 @@ function getVideoDuration(file: File): Promise<number> {
   });
 }
 
-// WHATSAPP FAST COMPRESS - 120MB -> 8MB for phone before upload
+// === ADDED: TIKTOK POSTER - Snap first frame in 0.5s, so feed no black while Bunny dey process ===
+export async function generateVideoPoster(file: File): Promise<string> {
+  return new Promise((resolve) => {
+    const url = URL.createObjectURL(file);
+    const v = document.createElement("video");
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "metadata";
+    v.onloadeddata = () => { try { v.currentTime = 0.5; } catch { URL.revokeObjectURL(url); resolve(""); } };
+    v.onseeked = () => {
+      try {
+        const canvas = document.createElement("canvas");
+        canvas.width = v.videoWidth || 720;
+        canvas.height = v.videoHeight || 1280;
+        const ctx = canvas.getContext("2d");
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height);
+          const poster = canvas.toDataURL("image/jpeg", 0.7);
+          URL.revokeObjectURL(url);
+          resolve(poster);
+        } else { URL.revokeObjectURL(url); resolve(""); }
+      } catch { URL.revokeObjectURL(url); resolve(""); }
+    };
+    v.onerror = () => { URL.revokeObjectURL(url); resolve(""); };
+    setTimeout(() => { URL.revokeObjectURL(url); resolve(""); }, 2000);
+    v.src = url;
+  });
+}
+
+// === ADDED: Bunny Stream Poster URL ===
+export function getBunnyStreamPosterUrl(embedUrl: string): string {
+  return "";
+}
+
+// === ADDED: Check if Bunny Stream video don finish processing - so we no show "Processing..." ===
+export async function checkBunnyStreamReady(embedUrl: string): Promise<boolean> {
+  try {
+    const parts = embedUrl.split("/");
+    const videoId = parts[parts.length - 1]?.split("?")[0];
+    if (!videoId || !STREAM_LIB_ID || !STREAM_API_KEY) return true;
+    const res = await fetch(`https://video.bunnycdn.com/library/${STREAM_LIB_ID}/videos/${videoId}`, {
+      headers: { AccessKey: STREAM_API_KEY },
+    });
+    if (!res.ok) return true;
+    const data = await res.json();
+    return (data.status ?? 4) >= 4;
+  } catch {
+    return true;
+  }
+}
+
+export function getBunnyVideoId(embedUrl: string): string {
+  const parts = embedUrl.split("/");
+  return parts[parts.length - 1]?.split("?")[0] || "";
+}
+
+// === FIXED: WHATSAPP FAST COMPRESS - ONLY for small video >80MB, NEVER for 3-mins Stream video ===
 async function compressVideoIfNeeded(file: File, onProgress?: ProgressCb): Promise<File> {
   if (!file.type.startsWith("video/")) return file;
-  if (file.size < 12 * 1024 * 1024) return file;
+  if (file.size < 80 * 1024 * 1024) return file;
+
+  const dur = await getVideoDuration(file);
+  if (dur > 45) return file;
 
   return new Promise((resolve) => {
     const video = document.createElement("video");
@@ -79,7 +138,7 @@ async function compressVideoIfNeeded(file: File, onProgress?: ProgressCb): Promi
 
       const recorder = new MediaRecorder(canvasStream, {
         mimeType: mime,
-        videoBitsPerSecond: 1_200_000,
+        videoBitsPerSecond: 2_500_000,
       });
 
       const chunks: Blob[] = [];
@@ -133,21 +192,15 @@ async function compressVideoIfNeeded(file: File, onProgress?: ProgressCb): Promi
   });
 }
 
-// ============ NEW: TIKTOK WATERMARK DOWNLOAD ============
+// ============ TIKTOK WATERMARK DOWNLOAD ============
 function drawAFUEDWatermark(ctx: CanvasRenderingContext2D, w: number, h: number, authorName: string, frame: number) {
   const y = h - 28;
   const bounce = Math.sin(frame * 0.03) * 3;
-  
-  // Black background like TikTok
   ctx.fillStyle = "rgba(0,0,0,0.65)";
   ctx.fillRect(8, y - 16 + bounce, w - 16, 24);
-  
-  // White text
   ctx.fillStyle = "white";
   ctx.font = `bold ${Math.max(12, w * 0.028)}px Plus Jakarta Sans, sans-serif`;
   ctx.fillText(`AFUED • @${authorName} • afuedconnect.vercel.app`, 14, y + bounce);
-  
-  // Small green dot
   ctx.fillStyle = "#00a884";
   ctx.beginPath();
   ctx.arc(12, y - 4 + bounce, 3, 0, Math.PI * 2);
@@ -155,11 +208,10 @@ function drawAFUEDWatermark(ctx: CanvasRenderingContext2D, w: number, h: number,
 }
 
 export async function downloadVideoWithAFUEDWatermark(
-  videoUrl: string, 
+  videoUrl: string,
   authorName: string,
   onProgress?: ProgressCb
 ): Promise<void> {
-  // For Bunny Stream iframe links - use direct download (no burn, because iframe)
   if (videoUrl.includes("iframe.mediadelivery.net")) {
     return downloadAFUEDVideoSimple(videoUrl, authorName);
   }
@@ -184,9 +236,7 @@ export async function downloadVideoWithAFUEDWatermark(
     canvas.width = w;
     canvas.height = h;
     const ctx = canvas.getContext("2d")!;
-    
     const stream = canvas.captureStream(30);
-    // Add audio if possible
     try {
       const vStream = (video as any).captureStream?.() || (video as any).mozCaptureStream?.();
       if (vStream) {
@@ -197,7 +247,7 @@ export async function downloadVideoWithAFUEDWatermark(
     const mime = MediaRecorder.isTypeSupported("video/webm;codecs=vp9,opus")
       ? "video/webm;codecs=vp9,opus"
       : "video/webm";
-    
+
     const recorder = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 2_000_000 });
     const chunks: Blob[] = [];
     recorder.ondataavailable = (e) => { if (e.data.size > 0) chunks.push(e.data); };
@@ -210,7 +260,7 @@ export async function downloadVideoWithAFUEDWatermark(
     video.currentTime = 0;
     await video.play();
     recorder.start(100);
-    
+
     if (onProgress) onProgress(10);
 
     const draw = () => {
@@ -220,7 +270,7 @@ export async function downloadVideoWithAFUEDWatermark(
       }
       ctx.drawImage(video, 0, 0, w, h);
       drawAFUEDWatermark(ctx, w, h, authorName, frame++);
-      
+
       if (onProgress) {
         const p = Math.round((video.currentTime / video.duration) * 80) + 10;
         onProgress(Math.min(p, 95));
@@ -231,8 +281,7 @@ export async function downloadVideoWithAFUEDWatermark(
 
     const blob = await finished;
     if (onProgress) onProgress(98);
-    
-    // Download
+
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
@@ -244,13 +293,11 @@ export async function downloadVideoWithAFUEDWatermark(
     if (onProgress) onProgress(100);
 
   } catch (err) {
-    // Fallback to simple download if burn fails (CORS etc)
     console.warn("Watermark burn failed, using simple download", err);
     return downloadAFUEDVideoSimple(videoUrl, authorName);
   }
 }
 
-// SIMPLE DOWNLOAD - NO BURN (Fast fallback)
 export async function downloadAFUEDVideoSimple(videoUrl: string, authorName: string): Promise<void> {
   try {
     const res = await fetch(videoUrl);
@@ -269,7 +316,6 @@ export async function downloadAFUEDVideoSimple(videoUrl: string, authorName: str
   }
 }
 
-// OLD NAME FOR COMPATIBILITY - Keep your old code working
 export const downloadAFUEDVideo = downloadAFUEDVideoSimple;
 
 // This na the main function wey your app dey call
@@ -280,13 +326,21 @@ export const uploadToBunny = async (
 ): Promise<string> => {
   if (!file) throw new Error("No file selected");
 
-  if (file.type.startsWith("video/") && file.size > 10 * 1024 * 1024) {
+  const isVideoCheck = folder === "videos" || file.type.startsWith("video/");
+  const durationEarly = isVideoCheck ? await getVideoDuration(file) : 0;
+
+  if (isVideoCheck && durationEarly > 180) {
+    throw new Error(`Video too long! Max 3 mins. Yours na ${Math.round(durationEarly)}s`);
+  }
+
+  // FIXED: Only compress if SHORT video + really big. NEVER compress 3-mins Stream video
+  if (file.type.startsWith("video/") && durationEarly <= 45 && file.size > 80 * 1024 * 1024) {
     if (onProgress) onProgress(1);
     file = await compressVideoIfNeeded(file, onProgress);
   }
 
   const isVideoFile = folder === "videos" || file.type.startsWith("video/");
-  const duration = isVideoFile ? await getVideoDuration(file) : 0;
+  const duration = isVideoFile ? durationEarly : 0;
 
   if (isVideoFile && duration > 180) {
     throw new Error(`Video too long! Max 3 mins. Yours na ${Math.round(duration)}s`);
@@ -298,7 +352,6 @@ export const uploadToBunny = async (
     if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
       throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
     }
-    // ===== VOICE FIX 1: Handle missing name + .webm force =====
     const rawName1 = file.name && file.name.includes(".") ? file.name : `voice-${Date.now()}.webm`;
     const safeName = rawName1.replace(/[^a-zA-Z0-9.-]/g, "_");
     let finalSafe1 = safeName;
@@ -312,7 +365,6 @@ export const uploadToBunny = async (
       const xhr = new XMLHttpRequest();
       xhr.open('PUT', url);
       xhr.setRequestHeader('AccessKey', BUNNY_ACCESS_KEY);
-      // ===== VOICE FIX 2: Simple content-type for Bunny =====
       const ct1 = file.type.startsWith("audio/") ? "audio/webm" : (file.type.split(";")[0] || "application/octet-stream");
       xhr.setRequestHeader('Content-Type', ct1);
       xhr.upload.onprogress = (e) => {
@@ -331,15 +383,18 @@ export const uploadToBunny = async (
   }
 
   if (isVideoFile) {
+    // 45s - 3 MINS VIDEO: Go Bunny Stream - NO browser compress, upload direct = FAST
     if (!STREAM_LIB_ID || !STREAM_API_KEY) {
       throw new Error("Stream keys missing - add VITE_BUNNY_STREAM_LIBRARY_ID & VITE_BUNNY_STREAM_API_KEY to Vercel");
     }
 
+    if (onProgress) onProgress(5);
+
     const createRes = await fetch(`https://video.bunnycdn.com/library/${STREAM_LIB_ID}/videos`, {
       method: 'POST',
-      headers: { 
-        'AccessKey': STREAM_API_KEY, 
-        'Content-Type': 'application/json' 
+      headers: {
+        'AccessKey': STREAM_API_KEY,
+        'Content-Type': 'application/json'
       },
       body: JSON.stringify({ title: file.name })
     });
@@ -348,7 +403,7 @@ export const uploadToBunny = async (
       const t = await createRes.text();
       throw new Error("Stream create fail: " + t);
     }
-    
+
     const { guid: videoId } = await createRes.json();
 
     await new Promise<void>((resolve, reject) => {
@@ -357,7 +412,7 @@ export const uploadToBunny = async (
       xhr.setRequestHeader('AccessKey', STREAM_API_KEY);
       xhr.upload.onprogress = (e) => {
         if (e.lengthComputable && onProgress) {
-          onProgress(Math.round((e.loaded / e.total) * 100));
+          onProgress(Math.round(5 + (e.loaded / e.total) * 95));
         }
       };
       xhr.onload = () => {
@@ -374,7 +429,6 @@ export const uploadToBunny = async (
   if (!BUNNY_ENDPOINT || !BUNNY_ACCESS_KEY || !BUNNY_PUBLIC_URL) {
     throw new Error("Storage keys missing - add VITE_BUNNY_ENDPOINT, PUBLIC_URL, ACCESS_KEY to Vercel");
   }
-  // ===== VOICE FIX 1b: Same fix for voice/images =====
   const rawName2 = file.name && file.name.includes(".") ? file.name : `voice-${Date.now()}.webm`;
   const safeName2 = rawName2.replace(/[^a-zA-Z0-9.-]/g, "_");
   let finalSafe2 = safeName2;
@@ -388,7 +442,6 @@ export const uploadToBunny = async (
     const xhr = new XMLHttpRequest();
     xhr.open('PUT', url);
     xhr.setRequestHeader('AccessKey', BUNNY_ACCESS_KEY);
-    // ===== VOICE FIX 2b: Simple content-type =====
     const ct2 = file.type.startsWith("audio/") ? "audio/webm" : (file.type.split(";")[0] || "application/octet-stream");
     xhr.setRequestHeader('Content-Type', ct2);
     xhr.upload.onprogress = (e) => {
@@ -415,10 +468,10 @@ export const getBunnyStreamPlayUrl = (idOrUrl: string) => {
 export const startBoldVoiceRecording = async () => {
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
-      echoCancellation: true,  // FIX: was false, now true = clear
-      noiseSuppression: true,   // FIX: was false, now true = no TV noise
+      echoCancellation: true,
+      noiseSuppression: true,
       autoGainControl: true,
-      sampleRate: 44100,        // FIX: was 48000 noisy, now 44100 clear
+      sampleRate: 44100,
       channelCount: 1
     }
   });
@@ -426,7 +479,7 @@ export const startBoldVoiceRecording = async () => {
   const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)({ sampleRate: 44100 });
   const source = audioCtx.createMediaStreamSource(stream);
   const gain = audioCtx.createGain();
-  gain.gain.value = 1.0; // FIX: was 2.5 too loud, now 1.0 = WhatsApp loudness
+  gain.gain.value = 1.0;
   const dest = audioCtx.createMediaStreamDestination();
   source.connect(gain);
   gain.connect(dest);
