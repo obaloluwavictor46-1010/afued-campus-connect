@@ -9,7 +9,7 @@ import { MediaGallery } from "./MediaView";
 import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// VIDEO - FIXED: Observer on WRAPPER, not on video. 1 observer only.
+// VIDEO - FIXED NO SUPABASE: Use video itself to show face, no hidden poster, no CORS wahala
 function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -17,49 +17,23 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   const [isDownloading, setIsDownloading] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
-  const [poster, setPoster] = useState<string>("")
-  const [isLoaded, setIsLoaded] = useState(false)
-  const [isNear, setIsNear] = useState(false)
 
-  useEffect(() => {
-    setPoster("")
-    setIsLoaded(false)
-    setHasError(false)
-    const v = document.createElement("video")
-    v.muted = true
-    v.playsInline = true
-    v.preload = "metadata"
-    v.crossOrigin = "anonymous"
-    v.onloadeddata = () => {
-      try { v.currentTime = 0.5 } catch {}
-    }
-    v.onseeked = () => {
-      try {
-        const canvas = document.createElement("canvas")
-        canvas.width = v.videoWidth || 720
-        canvas.height = v.videoHeight || 1280
-        const ctx = canvas.getContext("2d")
-        if (ctx) {
-          ctx.drawImage(v, 0, 0, canvas.width, canvas.height)
-          const url = canvas.toDataURL("image/jpeg", 0.7)
-          setPoster(url)
-        }
-      } catch {}
-    }
-    v.onerror = () => {}
-    v.src = src.includes("#t=") ? src : `${src}#t=0.1`
-  }, [src, retryKey])
+  // NO hidden video poster generation - Bunny blocks crossOrigin, na why poster always empty = black.
+  // Instead we use src + "#t=0.5" - browser go show frame for 0.5s as face, no Supabase needed.
+  const displaySrc = src.includes("#t=") ? src : `${src}#t=0.5`;
 
-  // FIXED: ONE observer on wrapper div. Near (800px) = load, Far = pause only, no blank.
+  // FIXED: Observer on wrapper, threshold 0.5, NO rootMargin.
+  // If less than half video dey screen -> pause immediately. No 800px delay again.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const obs = new IntersectionObserver(
       ([e]) => {
-        if (e.isIntersecting) setIsNear(true);
-        else videoRef.current?.pause();
+        if (!e.isIntersecting) {
+          try { videoRef.current?.pause(); } catch {}
+        }
       },
-      { threshold: 0.05, rootMargin: "800px 0px 800px 0px" }
+      { threshold: 0.5, rootMargin: "0px" }
     );
     obs.observe(wrap);
     return () => obs.disconnect();
@@ -84,31 +58,19 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   };
 
   return (
-    <div ref={wrapRef} className="relative w-full bg-black group overflow-hidden min-h-[280px]">
-      {!isLoaded && poster && (
-        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
-      )}
-      {!isLoaded && !poster && (
-        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 to-black text-white">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
-          <p className="mt-2 text-[11px] text-white/70">Loading video... ⏳</p>
-        </div>
-      )}
+    <div ref={wrapRef} className="relative w-full bg-zinc-900 group overflow-hidden min-h-[280px]">
+      {/* Video always visible - no opacity 0.01, no spinner cover, no black blank */}
       <video
         key={retryKey}
         ref={videoRef}
-        src={isNear ? src : undefined}
+        src={displaySrc}
         controls
         playsInline
-        preload="auto"
-        poster={poster || undefined}
+        preload="metadata"
         onPlay={handlePlay}
         onError={handleError}
-        onLoadedData={() => setIsLoaded(true)}
-        onCanPlay={() => setIsLoaded(true)}
         onClick={() => { if (hasError) handleRetry(); }}
-        className="relative z-10 w-full max-h-[480px] bg-black"
-        style={{ opacity: isLoaded || !poster ? 1 : 0.01 }}
+        className="relative z-10 w-full max-h-[480px] bg-zinc-900 object-contain"
       />
       {hasError && (
         <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
@@ -153,18 +115,15 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
 
   useEffect(() => { setShowCover(!!posterUrl); }, [posterUrl]);
 
-  // FIXED: ONE observer does preload + pause. No second observer to fight am.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
     const obs = new IntersectionObserver(
       ([entry]) => {
-        // Near = 1000px away (2-3 videos under) -> start loading for background
         if (entry.isIntersecting) {
           setIsNear(true);
           setIsVisible(true);
         } else {
-          // Far away -> pause via postMessage, DON'T blank src, so preload no die
           setIsVisible(false);
           try {
             iframeRef.current?.contentWindow?.postMessage({ action: "pause" }, "*");
@@ -177,7 +136,6 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
     return () => obs.disconnect();
   }, []);
 
-  // Auto-hide cover when iframe don load
   useEffect(() => {
     if (!isNear) return;
     if (!posterUrl) { setShowCover(false); return; }
@@ -193,7 +151,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
   };
 
   return (
-    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-black overflow-hidden" style={{ height: '380px' }}>
+    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-zinc-900 overflow-hidden" style={{ height: '380px' }}>
       {isNear ? (
         <iframe
           ref={iframeRef}
@@ -205,12 +163,10 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
           allowFullScreen
         />
       ) : (
-        <div className="flex h-full w-full items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+        <div className="flex h-full w-full items-center justify-center bg-zinc-900">
           <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
         </div>
       )}
-
-      {/* COVER: ONLY 1 text. Old video (no poster) = no cover at all */}
       {showCover && posterUrl && isNear && (
         <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
           <img src={posterUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
@@ -224,7 +180,6 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
           </div>
         </button>
       )}
-
       <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
@@ -274,7 +229,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => { cancelled = true; supabase.removeChannel(ch); };
   }, [post.id, user?.id]);
 
-  // FIXED: No more fake "table never create" message. Show real error.
   const handleRepost = async () => {
     if (!user) { toast.error("Login first"); return; }
     if (reposting) return;
@@ -295,7 +249,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       }
     } catch (e: any) {
       console.log("REPOST REAL ERROR:", e);
-      // Only 42P01 means table truly missing. Everything else show real message.
       if (e.code === "42P01") {
         toast.error("Repost table never create yet - run SQL for reposts first");
       } else if (e.code === "23505") {
@@ -416,4 +369,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-            }
+      }
