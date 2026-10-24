@@ -90,6 +90,8 @@ function FeedInner() {
   const [myReposts, setMyReposts] = useState<Set<string>>(new Set());
   const [repostBy, setRepostBy] = useState<Record<string, any[]>>({});
   const [repostingId, setRepostingId] = useState<string | null>(null);
+  // 🔴 NEW POSTS RED DOT
+  const [newCount, setNewCount] = useState(0);
 
   const loadReposts = async () => {
     const { data, error } = await supabase.from("reposts").select("post_id, user_id, created_at").order("created_at", { ascending: false });
@@ -155,9 +157,6 @@ function FeedInner() {
     } finally { setRepostingId(null); }
   };
 
-  // === STRONG WATCHDOG - NO SUPABASE NEEDED ===
-  // 1. Scroll comot video -> pause + sound stop
-  // 2. Tap second video -> first pause
   useEffect(() => {
     const pauseOffScreen = () => {
       document.querySelectorAll("video").forEach((v: any) => {
@@ -256,13 +255,28 @@ function FeedInner() {
     setOpenMenu(null);
   };
 
+  const showNewPosts = async () => {
+    setNewCount(0);
+    await load();
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  };
+
   useEffect(() => {
     setLoading(true);
+    setNewCount(0);
     load();
     loadReposts();
     const ch = supabase
       .channel(`feed-${channel}`)
-      .on("postgres_changes", { event: "*", schema: "public", table: "posts" }, load)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, (payload) => {
+        const newPost: any = payload.new;
+        if (newPost.user_id === user?.id) { load(); return; }
+        if (channel !== "All" && newPost.faculty_channel !== channel) return;
+        if (window.scrollY < 150) { load(); }
+        else { setNewCount((c) => c + 1); }
+      })
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "posts" }, load)
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "posts" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, load)
       .on("postgres_changes", { event: "*", schema: "public", table: "reposts" }, loadReposts)
       .subscribe();
@@ -286,6 +300,15 @@ function FeedInner() {
           </button>
         ))}
       </div>
+      {/* 🔴 NEW POSTS - Red Dot Pill */}
+      {newCount > 0 && (
+        <div className="sticky top-[125px] z-30 flex justify-center">
+          <button onClick={showNewPosts} className="flex items-center gap-2 rounded-full bg-red-500 px-5 py-2.5 text-sm font-extrabold text-white shadow-xl animate-bounce">
+            <span className="flex h-5 min-w-5 items-center justify-center rounded-full bg-white px-1 text-[11px] font-extrabold text-red-600">{newCount > 99 ? "99+" : newCount}</span>
+            🔴 {newCount} New Post{newCount > 1 ? "s" : ""} — Tap to see
+          </button>
+        </div>
+      )}
       <div className="space-y-4 p-4">
         <Composer 
           defaultChannel={channel} 
@@ -527,7 +550,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         else if (isVideo) video_url = url;
         else image_urls.push(url);
       }
-      // NO SUPABASE POSTER - removed. Poster only for temp post, real video go show face from #t=0.5 for PostCard
       const { data, error } = await supabase.from("posts").insert({
         user_id: user.id,
         content: savedContent,
@@ -921,7 +943,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
           <button onClick={undo} style={{color:'white', background:'rgba(0,0,0,0.4)', border:'none', fontSize:20, width:38, height:38, borderRadius:'50%'}}>↩</button>
         </div>
       </div>
-
       {tool==='crop' ? (
         <div id="crop-container-feed" onMouseMove={moveCropHandle} onTouchMove={moveCropHandle} onMouseUp={endCropHandle} onTouchEnd={endCropHandle} style={{flex:1, position:'relative', background:'black', display:'flex', flexDirection:'column', overflow:'hidden'}}>
           <div style={{flex:1, position:'relative', display:'flex', alignItems:'center', justifyContent:'center', overflow:'hidden'}}>
@@ -994,7 +1015,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
         )}
       </div>
       )}
-
       {tool!=='crop' && (
         <div style={{background:'#000', padding:'6px 12px', display:'flex', gap:8, overflowX:'auto'}}>
           <span style={{color:'#aaa', fontSize:11, whiteSpace:'nowrap', alignSelf:'center'}}>↑ Swipe up for filters</span>
@@ -1003,7 +1023,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
           ))}
         </div>
       )}
-
       {tool==='pen' && (
         <div style={{background:'#111', padding:'10px 12px'}}>
           <div style={{display:'flex', gap:8, overflowX:'auto', marginBottom:8}}>
@@ -1022,7 +1041,6 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
           <button onClick={()=>setDrawLines([])} style={{background:'#ff5252', color:'white', border:'none', padding:'8px 12px', borderRadius:20, fontWeight:'bold', fontSize:12}}>Erase All</button>
         </div>
       )}
-
       <div style={{background:'#000', padding:'10px 12px 14px', display:'flex', gap:8, alignItems:'center'}}>
         <div style={{flex:1, background:'#222', borderRadius:24, padding:'8px 12px', display:'flex', alignItems:'center', gap:8}}>
           <span style={{fontSize:18}}>🖼️</span>
@@ -1034,4 +1052,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-                                  }
+  }
