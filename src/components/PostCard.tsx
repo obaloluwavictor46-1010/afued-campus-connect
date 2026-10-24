@@ -5,18 +5,53 @@ import { toast } from "sonner";
 import { Avatar } from "./AppShell";
 import { shortFaculty, supabase, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
-import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
+import { downloadAFUEDVideoSimple, getBunnyStreamPosterUrl, getBunnyVideoId } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// VIDEO - FIXED NO SUPABASE: Use video itself to show face, no hidden poster, no CORS wahala
-function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
+// ===== GLOBAL: Only 1 video / audio fit play at a time =====
+function pauseAllOthers(except?: HTMLMediaElement | null) {
+  document.querySelectorAll("video, audio").forEach((el: any) => {
+    if (el !== except) { try { el.pause(); } catch {} }
+  });
+}
+
+// Convert Bunny Stream embed link -> direct MP4 wey <video> fit play fast
+function toDirectVideoUrl(src: string): string {
+  if (!src) return src;
+  if (src.includes("iframe.mediadelivery.net")) {
+    const id = getBunnyVideoId(src);
+    const lib = import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID;
+    if (id && lib) return `https://vz-${lib}.b-cdn.net/${id}/play_720p.mp4`;
+  }
+  if (src.includes("b-cdn.net") && src.includes("/playlist.m3u8")) {
+    return src.replace("/playlist.m3u8", "/play_720p.mp4");
+  }
+  return src;
+}
+
+function toPosterUrl(src: string, fallback: string): string {
+  if (fallback) return fallback;
+  if (src.includes("iframe.mediadelivery.net")) {
+    const p = getBunnyStreamPosterUrl(src);
+    if (p) return p;
+  }
+  return "";
+}
+
+// ===== ONE VIDEO COMPONENT FOR ALL VIDEOS - NO IFRAME =====
+function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
-  const [dlProgress, setDlProgress] = useState(0)
-  const [isDownloading, setIsDownloading] = useState(false)
-  const [hasError, setHasError] = useState(false)
-  const [retryKey, setRetryKey] = useState(0)
-  const displaySrc = src.includes("#t=") ? src : `${src}#t=0.5`;
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [hasError, setHasError] = useState(false);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [hasStarted, setHasStarted] = useState(false);
+  const [retryKey, setRetryKey] = useState(0);
+
+  const directSrc = toDirectVideoUrl(src);
+  const poster = toPosterUrl(src, posterUrl || "");
+
+  // 1. Pause when scroll comot - THE MAIN FIX
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -24,156 +59,104 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
       ([e]) => {
         if (!e.isIntersecting) {
           try { videoRef.current?.pause(); } catch {}
+          setIsPlaying(false);
         }
       },
-      { threshold: 0.5, rootMargin: "0px" }
+      { threshold: 0.3 }
     );
     obs.observe(wrap);
     return () => obs.disconnect();
-  }, [src, retryKey]);
-  const handlePlay = () => {
-    document.querySelectorAll('video, audio').forEach((el: any) => {
-      if (el !== videoRef.current) { try { el.pause(); } catch {} }
-    });
-    document.querySelectorAll('iframe').forEach((f: any) => {
-      if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
-        try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
-      }
-    });
+  }, [directSrc]);
+
+  // 2. If user pause from outside (another video play), update button
+  useEffect(() => {
+    const v = videoRef.current;
+    if (!v) return;
+    const onPause = () => setIsPlaying(false);
+    const onPlay = () => { setIsPlaying(true); setHasStarted(true); };
+    v.addEventListener("pause", onPause);
+    v.addEventListener("play", onPlay);
+    return () => { v.removeEventListener("pause", onPause); v.removeEventListener("play", onPlay); };
+  }, [retryKey, directSrc]);
+
+  const togglePlay = async () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (hasError) { setHasError(false); setRetryKey(k => k + 1); return; }
+    if (v.paused) {
+      pauseAllOthers(v);
+      try { await v.play(); } catch {}
+    } else {
+      v.pause();
+    }
   };
-  const handleError = () => setHasError(true);
+
   const handleRetry = () => {
     setHasError(false);
     setRetryKey(k => k + 1);
     setTimeout(() => { try { videoRef.current?.load(); } catch {} }, 100);
   };
+
   return (
-    <div ref={wrapRef} className="relative w-full bg-zinc-900 group overflow-hidden min-h-[280px]">
+    <div ref={wrapRef} className="relative w-full bg-black overflow-hidden">
       <video
         key={retryKey}
         ref={videoRef}
-        src={displaySrc}
-        controls
+        src={directSrc}
+        poster={poster || undefined}
         playsInline
         preload="metadata"
-        onPlay={handlePlay}
-        onError={handleError}
-        onClick={() => { if (hasError) handleRetry(); }}
-        className="relative z-10 w-full max-h-[480px] bg-zinc-900 object-contain"
+        controls={hasStarted}
+        onError={() => setHasError(true)}
+        onPlay={() => { pauseAllOthers(videoRef.current); }}
+        className="w-full max-h-[520px] bg-black object-contain"
       />
-      {hasError && (
-        <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
-          <span className="text-3xl">↻</span>
-          <span>Video no load? Tap to resurrect</span>
-          <span className="text-xs text-white/70">E never delete, na network</span>
-        </button>
-      )}
-      <div className="absolute bottom-10 left-2 z-20 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
-        AFUED • @{authorName} • afuedconnect
-      </div>
-      <button
-        onClick={async (e)=>{
-          e.stopPropagation()
-          setIsDownloading(true)
-          try { await downloadVideoWithAFUEDWatermark(src, authorName, (p)=>setDlProgress(p)) } finally { setIsDownloading(false); setDlProgress(0) }
-        }}
-        disabled={isDownloading}
-        className="absolute bottom-2 right-2 z-20 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
-      >
-        <Download className="h-3 w-3" />
-        {isDownloading ? ` ${dlProgress}%` : " Download"}
-      </button>
-      {isDownloading && (
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 z-20">
-          <div className="h-full bg-[#00a884] transition-all duration-200" style={{width: `${dlProgress}%`}}></div>
-        </div>
-      )}
-    </div>
-  )
-}
 
-function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const iframeRef = useRef<HTMLIFrameElement>(null);
-  const [isDownloading, setIsDownloading] = useState(false);
-  const [showCover, setShowCover] = useState(!!posterUrl);
-  const [isNear, setIsNear] = useState(false);
-  const [isReady, setIsReady] = useState(false);
-  const [isVisible, setIsVisible] = useState(false);
-  useEffect(() => { setShowCover(!!posterUrl); }, [posterUrl]);
-  useEffect(() => {
-    const wrap = wrapRef.current;
-    if (!wrap) return;
-    const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (entry.isIntersecting) {
-          setIsNear(true);
-          setIsVisible(true);
-        } else {
-          setIsVisible(false);
-          try {
-            iframeRef.current?.contentWindow?.postMessage({ action: "pause" }, "*");
-          } catch {}
-        }
-      },
-      { threshold: 0, rootMargin: "1000px 0px 1000px 0px" }
-    );
-    obs.observe(wrap);
-    return () => obs.disconnect();
-  }, []);
-  useEffect(() => {
-    if (!isNear) return;
-    if (!posterUrl) { setShowCover(false); return; }
-    const t = setTimeout(() => { setIsReady(true); setShowCover(false); }, 1800);
-    return () => clearTimeout(t);
-  }, [isNear, posterUrl]);
-  const handleWrapClick = () => {
-    document.querySelectorAll('video, audio').forEach((el: any) => {
-      try { (el as HTMLMediaElement).pause(); } catch {}
-    });
-    setShowCover(false);
-  };
-  return (
-    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-zinc-900 overflow-hidden" style={{ height: '380px' }}>
-      {isNear ? (
-        <iframe
-          ref={iframeRef}
-          src={src}
-          onLoad={() => setIsReady(true)}
-          className="w-full h-full"
-          style={{ border: 0, opacity: showCover ? 0 : 1, visibility: isVisible ? "visible" : "visible" }}
-          allow="autoplay; fullscreen"
-          allowFullScreen
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center bg-zinc-900">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
-        </div>
-      )}
-      {showCover && posterUrl && isNear && (
-        <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
-          <img src={posterUrl} alt="" className="absolute inset-0 h-full w-full object-cover" />
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
-            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 backdrop-blur">
-              <Play className="ml-1 h-7 w-7 fill-white text-white" />
+      {/* TAP TO PLAY COVER - No autoplay, no black, no mix */}
+      {!hasStarted && !hasError && (
+        <button onClick={togglePlay} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
+          {poster ? (
+            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
+          ) : (
+            <div className="absolute inset-0 bg-zinc-900" />
+          )}
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40">
+            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black/70 backdrop-blur border border-white/30">
+              <Play className="ml-1 h-8 w-8 fill-white text-white" />
             </span>
-            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold backdrop-blur">
-              {isReady ? "Tap to play ▶" : "Loading..."}
-            </span>
+            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold backdrop-blur">Tap to Play ▶</span>
           </div>
         </button>
       )}
+
+      {/* Paused - show big play button again */}
+      {hasStarted && !isPlaying && !hasError && (
+        <button onClick={togglePlay} className="absolute inset-0 z-20 flex items-center justify-center bg-black/30">
+          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 backdrop-blur">
+            <Play className="ml-1 h-7 w-7 fill-white text-white" />
+          </span>
+        </button>
+      )}
+
+      {hasError && (
+        <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white text-sm font-semibold gap-2">
+          <span className="text-3xl">↻</span>
+          <span>Video no load? Tap to try again</span>
+          <span className="text-xs text-white/70">E never delete, na network</span>
+        </button>
+      )}
+
       <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
       <button
-        onClick={async (e)=>{
-          e.stopPropagation()
-          setIsDownloading(true)
-          try { await downloadAFUEDVideoSimple(src, authorName) } finally { setIsDownloading(false) }
+        onClick={async (e) => {
+          e.stopPropagation();
+          setIsDownloading(true);
+          try { await downloadAFUEDVideoSimple(src, authorName); } finally { setIsDownloading(false); }
         }}
         disabled={isDownloading}
-        className="absolute bottom-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1"
+        className="absolute bottom-2 right-2 z-30 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
       >
         <Download className="h-3 w-3" />
         {isDownloading ? " ..." : " Download"}
@@ -193,7 +176,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const [repostCount, setRepostCount] = useState(0);
   const [myReposted, setMyReposted] = useState(false);
   const [reposting, setReposting] = useState(false);
-  // PIN STATE - added, no touch other logic
   const [isPinned, setIsPinned] = useState(!!post.is_pinned);
   const [pinning, setPinning] = useState(false);
   const postOwnerId = post.user_id || post.author_id || post.profiles?.id || author?.id;
@@ -208,10 +190,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (user?.id) setLiked((data || []).some((r: any) => r.user_id === user.id));
   };
 
-  useEffect(() => {
-    loadLikes();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [post.id, user?.id]);
+  useEffect(() => { loadLikes(); }, [post.id, user?.id]);
 
   const toggleLike = async () => {
     if (!user) { toast.error("Login first"); return; }
@@ -239,7 +218,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     } finally { setLiking(false); }
   };
 
-  // PIN HANDLER - only 1 pinned post per user
   const togglePin = async () => {
     if (!user) { toast.error("Login first"); return; }
     if (!isOwnPost) return;
@@ -268,10 +246,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     const loadRepost = async () => {
       const { data, error } = await supabase.from("reposts").select("id, user_id").eq("post_id", post.id);
       if (cancelled) return;
-      if (error) {
-        console.log("LOAD REPOST ERROR:", error.code, error.message);
-        return;
-      }
+      if (error) { console.log("LOAD REPOST ERROR:", error.code, error.message); return; }
       setRepostCount((data || []).length);
       if (user?.id) setMyReposted((data || []).some((r: any) => r.user_id === user.id));
     };
@@ -299,16 +274,10 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       }
     } catch (e: any) {
       console.log("REPOST REAL ERROR:", e);
-      if (e.code === "42P01") {
-        toast.error("Repost table never create yet - run SQL for reposts first");
-      } else if (e.code === "23505") {
-        toast.error("You don repost this one before");
-        setMyReposted(true);
-      } else if (e.code === "42501") {
-        toast.error("Policy still block am (42501) - run policy SQL again");
-      } else {
-        toast.error(`Repost failed: ${e.code || ""} - ${e.message || "Unknown error"}`);
-      }
+      if (e.code === "42P01") toast.error("Repost table never create yet - run SQL for reposts first");
+      else if (e.code === "23505") { toast.error("You don repost this one before"); setMyReposted(true); }
+      else if (e.code === "42501") toast.error("Policy still block am (42501) - run policy SQL again");
+      else toast.error(`Repost failed: ${e.code || ""} - ${e.message || "Unknown error"}`);
     } finally { setReposting(false); }
   };
 
@@ -317,21 +286,18 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     const audio = audioRef.current;
     if (!card) return;
     const obs = new IntersectionObserver(
-      ([entry]) => {
-        if (!entry.isIntersecting && audio) { audio.pause(); setPlaying(false); }
-      },
+      ([entry]) => { if (!entry.isIntersecting && audio) { audio.pause(); setPlaying(false); } },
       { threshold: 0 }
     );
     obs.observe(card);
     return () => obs.disconnect();
   }, []);
-  
+
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
-  const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
   const authorName = author?.full_name || post.profiles?.full_name || "student";
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
-  
+
   let imageUrls: string[] = [];
   try {
     const raw = post.image_urls || post.image_url || [];
@@ -347,15 +313,8 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
 
   const togglePlay = () => {
     if (!audioRef.current) return;
-    document.querySelectorAll('audio, video').forEach(el => {
-      if (el !== audioRef.current) (el as HTMLMediaElement).pause();
-    });
-    document.querySelectorAll('iframe').forEach((f: any) => {
-      if (f.src && f.src !== "about:blank" && f.src.includes("iframe.mediadelivery.net")) {
-        try { f.dataset.savedSrc = f.src; f.src = "about:blank"; } catch {}
-      }
-    });
-    if (playing) { audioRef.current.pause(); setPlaying(false); } else { audioRef.current.play(); setPlaying(true); }
+    if (playing) { audioRef.current.pause(); setPlaying(false); }
+    else { pauseAllOthers(audioRef.current); audioRef.current.play(); setPlaying(true); }
   };
 
   return (
@@ -379,12 +338,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
           </span>
         )}
         {isOwnPost && (
-          <button
-            onClick={togglePin}
-            disabled={pinning}
-            title={isPinned ? "Unpin this post" : "Pin to top of Profile"}
-            className={`shrink-0 rounded-full p-2 transition active:scale-95 ${isPinned ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}
-          >
+          <button onClick={togglePin} disabled={pinning} title={isPinned ? "Unpin this post" : "Pin to top of Profile"} className={`shrink-0 rounded-full p-2 transition active:scale-95 ${isPinned ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}>
             {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
           </button>
         )}
@@ -401,7 +355,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         )}
       </div>
       {videoUrl && !imageUrls.length && (
-        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} authorName={authorName} posterUrl={posterUrl} /> : <AutoPauseVideo src={videoUrl} authorName={authorName} />
+        <TikTokVideo src={videoUrl} authorName={authorName} posterUrl={posterUrl} />
       )}
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
         <div className="mx-4 mb-3 flex items-center gap-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 p-3 border">
@@ -432,4 +386,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-       }
+            }
