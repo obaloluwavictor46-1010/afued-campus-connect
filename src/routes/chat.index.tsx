@@ -88,6 +88,14 @@ function ChatList() {
     setBusyId(null);
   };
 
+  // 🔴 TOTAL UNREAD - for header badge
+  const totalUnread = useMemo(() => Object.values(last).reduce((sum, x) => sum + (x.unread || 0), 0), [last]);
+
+  // Clear unread instantly when you tap a chat (so red dot comot sharp)
+  const clearUnreadLocally = (otherId: string) => {
+    setLast((prev) => prev[otherId] ? { ...prev, [otherId]: { ...prev[otherId], unread: 0 } } : prev);
+  };
+
   const sorted = useMemo(() => {
     const s = q.toLowerCase().trim();
     return users
@@ -96,11 +104,19 @@ function ChatList() {
         const hay = `${u.full_name||''} ${u.email||''} ${(u as any).phone||''} ${(u as any).matric_no||''} ${(u as any).department||''} ${(u as any).faculty||''} ${shortFaculty(u.faculty)||''}`.toLowerCase();
         return hay.includes(s);
       })
-      .sort((a, b) => (last[b.id]?.at ?? "").localeCompare(last[a.id]?.at ?? "") || Number(online.has(b.id)) - Number(online.has(a.id)));
+      // WhatsApp style: unread first, then newest, then online
+      .sort((a, b) => ((last[b.id]?.unread ?? 0) - (last[a.id]?.unread ?? 0)) || (last[b.id]?.at ?? "").localeCompare(last[a.id]?.at ?? "") || Number(online.has(b.id)) - Number(online.has(a.id)));
   }, [users, last, q, online]);
 
   return (
     <div>
+      {/* 🔴 TOP BAR - Total unread like WhatsApp */}
+      {totalUnread > 0 && (
+        <div className="mx-4 mt-3 flex items-center justify-between rounded-2xl bg-red-50 px-4 py-2.5 ring-1 ring-red-200">
+          <p className="text-sm font-bold text-red-700">🔴 {totalUnread} unread message{totalUnread > 1 ? "s" : ""}</p>
+          <p className="text-xs font-semibold text-red-500">Tap chat to read</p>
+        </div>
+      )}
       <div className="p-4 pb-2 flex items-center gap-2">
         <div className="flex flex-1 items-center gap-2 rounded-full bg-muted px-4">
           <Search className="h-4 w-4 text-muted-foreground" />
@@ -141,18 +157,22 @@ function ChatList() {
           ) : (
             sorted.map((u) => {
               const l = last[u.id];
+              const hasUnread = (l?.unread ?? 0) > 0;
               return (
-                <li key={u.id}>
-                  <Link to="/chat/$userId" params={{ userId: u.id }} className="flex items-center gap-3 px-4 py-3 active:bg-muted">
-                    <Avatar url={u.avatar_url} name={u.full_name} size={50} online={online.has(u.id)} />
+                <li key={u.id} className={hasUnread ? "bg-red-50/40" : ""}>
+                  <Link to="/chat/$userId" params={{ userId: u.id }} onClick={() => clearUnreadLocally(u.id)} className="flex items-center gap-3 px-4 py-3 active:bg-muted">
+                    <div className="relative shrink-0">
+                      <Avatar url={u.avatar_url} name={u.full_name} size={50} online={online.has(u.id)} />
+                      {hasUnread && <span className="absolute -right-0.5 -top-0.5 h-3.5 w-3.5 rounded-full border-2 border-white bg-red-500" />}
+                    </div>
                     <div className="min-w-0 flex-1 border-b pb-3">
                       <div className="flex items-baseline justify-between gap-2">
-                        <p className="truncate font-semibold">{u.full_name || u.email}</p>
-                        {l && <span className="shrink-0 text-[11px] text-muted-foreground">{formatDistanceToNow(new Date(l.at))}</span>}
+                        <p className={`truncate ${hasUnread ? "font-extrabold text-zinc-900" : "font-semibold"}`}>{u.full_name || u.email}</p>
+                        {l && <span className={`shrink-0 text-[11px] font-semibold ${hasUnread ? "text-red-600" : "text-muted-foreground"}`}>{formatDistanceToNow(new Date(l.at))}</span>}
                       </div>
                       <div className="flex items-center justify-between gap-2">
-                        <p className="truncate text-sm text-muted-foreground">{l ? l.text : online.has(u.id) ? "Online" : shortFaculty(u.faculty) || (u as any).department || (u as any).matric_no || "Tap to chat"}</p>
-                        {l && l.unread > 0 && <span className="rounded-full bg-primary px-2 py-0.5 text-[11px] font-bold text-primary-foreground">{l.unread}</span>}
+                        <p className={`truncate text-sm ${hasUnread ? "font-bold text-zinc-900" : "text-muted-foreground"}`}>{l ? l.text : online.has(u.id) ? "Online" : shortFaculty(u.faculty) || (u as any).department || (u as any).matric_no || "Tap to chat"}</p>
+                        {hasUnread && <span className="flex h-6 min-w-6 shrink-0 items-center justify-center rounded-full bg-red-500 px-1.5 text-[12px] font-extrabold text-white shadow">{l!.unread > 99 ? "99+" : l!.unread}</span>}
                       </div>
                     </div>
                   </Link>
@@ -164,4 +184,4 @@ function ChatList() {
       )}
     </div>
   );
-    }
+}
