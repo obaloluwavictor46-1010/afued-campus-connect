@@ -261,7 +261,11 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     let cancelled = false;
     const loadRepost = async () => {
       const { data, error } = await supabase.from("reposts").select("id, user_id").eq("post_id", post.id);
-      if (cancelled || error) return;
+      if (cancelled) return;
+      if (error) {
+        console.log("LOAD REPOST ERROR:", error.code, error.message);
+        return;
+      }
       setRepostCount((data || []).length);
       if (user?.id) setMyReposted((data || []).some((r: any) => r.user_id === user.id));
     };
@@ -270,6 +274,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => { cancelled = true; supabase.removeChannel(ch); };
   }, [post.id, user?.id]);
 
+  // FIXED: No more fake "table never create" message. Show real error.
   const handleRepost = async () => {
     if (!user) { toast.error("Login first"); return; }
     if (reposting) return;
@@ -289,9 +294,18 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         setRepostCount(c => c + 1);
       }
     } catch (e: any) {
-      if (e.message?.includes("reposts") || e.code === "42P01") {
+      console.log("REPOST REAL ERROR:", e);
+      // Only 42P01 means table truly missing. Everything else show real message.
+      if (e.code === "42P01") {
         toast.error("Repost table never create yet - run SQL for reposts first");
-      } else toast.error(e.message || "Repost failed");
+      } else if (e.code === "23505") {
+        toast.error("You don repost this one before");
+        setMyReposted(true);
+      } else if (e.code === "42501") {
+        toast.error("Policy still block am (42501) - run policy SQL again");
+      } else {
+        toast.error(`Repost failed: ${e.code || ""} - ${e.message || "Unknown error"}`);
+      }
     } finally { setReposting(false); }
   };
 
@@ -402,4 +416,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-      }
+            }
