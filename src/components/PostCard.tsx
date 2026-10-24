@@ -185,6 +185,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const { user } = useAuth();
   // === FIXED: REAL LIKE FROM SUPABASE, NO MORE localStorage FAKE ===
+  // === FAST: Optimistic like - heart changes instantly, Supabase saves for background ===
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
   const [liking, setLiking] = useState(false);
@@ -203,34 +204,36 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (user?.id) setLiked((data || []).some((r: any) => r.user_id === user.id));
   };
 
+  // FAST: No realtime channel again - e dey make Feed heavy/slow. Load once only.
   useEffect(() => {
     loadLikes();
-    const ch = supabase.channel(`likes-${post.id}`).on("postgres_changes", { event: "*", schema: "public", table: "likes", filter: `post_id=eq.${post.id}` }, loadLikes).subscribe();
-    return () => { supabase.removeChannel(ch); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [post.id, user?.id]);
 
   const toggleLike = async () => {
     if (!user) { toast.error("Login first"); return; }
     if (liking) return;
+    // FAST: Change heart FIRST, no wait for Supabase
+    const wasLiked = liked;
+    setLiked(!wasLiked);
+    setLikeCount(c => wasLiked ? Math.max(0, c - 1) : c + 1);
     setLiking(true);
     try {
-      if (liked) {
+      if (wasLiked) {
         const { error } = await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", user.id);
         if (error) throw error;
-        setLiked(false);
-        setLikeCount(c => Math.max(0, c - 1));
       } else {
         const { error } = await supabase.from("likes").insert({ post_id: post.id, user_id: user.id });
         if (error) throw error;
-        setLiked(true);
-        setLikeCount(c => c + 1);
       }
     } catch (e: any) {
+      // If e fail, revert back so count no lie
+      setLiked(wasLiked);
+      setLikeCount(c => wasLiked ? c + 1 : Math.max(0, c - 1));
       console.log("LIKE REAL ERROR:", e);
       if (e.code === "42P01") toast.error("Likes table never create yet - run likes SQL first");
       else if (e.code === "42501") toast.error("Policy still block am (42501) - run likes policy SQL again");
-      else if (e.code === "23505") { setLiked(true); }
+      else if (e.code === "23505") { setLiked(true); setLikeCount(c => c); }
       else toast.error(`Like failed: ${e.message || "Unknown"}`);
     } finally { setLiking(false); }
   };
@@ -248,8 +251,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       if (user?.id) setMyReposted((data || []).some((r: any) => r.user_id === user.id));
     };
     loadRepost();
-    const ch = supabase.channel(`repost-${post.id}`).on("postgres_changes", { event: "*", schema: "public", table: "reposts", filter: `post_id=eq.${post.id}` }, loadRepost).subscribe();
-    return () => { cancelled = true; supabase.removeChannel(ch); };
+    return () => { cancelled = true; };
   }, [post.id, user?.id]);
 
   const handleRepost = async () => {
@@ -334,7 +336,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   return (
     <article ref={cardRef} className="overflow-hidden rounded-2xl border bg-card shadow-card">
       <div className="flex items-center gap-3 p-4">
-        {/* FIXED: No more Link to /u/$userId - that route no exist, e dey cause 404. Now na div */}
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <Avatar url={author?.avatar_url} name={author?.full_name} />
           <div className="min-w-0 flex-1">
@@ -375,7 +376,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       )}
       {musicUrl && <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />}
       <div className="flex items-center gap-5 px-4 py-3">
-        <button onClick={toggleLike} disabled={liking} className="flex items-center gap-1.5 text-sm font-medium">
+        <button onClick={toggleLike} className="flex items-center gap-1.5 text-sm font-medium active:scale-95 transition">
           <Heart className={`h-6 w-6 transition ${liked ? "fill-like text-like scale-110" : ""}`} />
           {likeCount}
         </button>
@@ -391,4 +392,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-      }
+    }
