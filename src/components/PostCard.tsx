@@ -15,17 +15,22 @@ function pauseAllOthers(except?: HTMLMediaElement | null) {
   });
 }
 
-// Convert Bunny Stream embed link -> direct MP4 wey <video> fit play fast
-function toDirectVideoUrl(src: string): string {
-  if (!src) return src;
-  if (src.includes("iframe.mediadelivery.net")) {
-    const id = getBunnyVideoId(src);
-    const lib = import.meta.env.VITE_BUNNY_STREAM_LIBRARY_ID;
-    if (id && lib) return `https://vz-${lib}.b-cdn.net/${id}/play_720p.mp4`;
-  }
-  if (src.includes("b-cdn.net") && src.includes("/playlist.m3u8")) {
-    return src.replace("/playlist.m3u8", "/play_720p.mp4");
-  }
+// ===== STEP 1 FIX: Build MP4 from video link itself, no Vercel wahala =====
+// Example src: https://iframe.mediadelivery.net/embed/123456/abc-def
+// We take 123456 and abc-def FROM the link, so e no fit mismatch
+function parseBunny(src: string) {
+  if (!src.includes("iframe.mediadelivery.net")) return null;
+  const parts = src.split("/");
+  // ["https:", "", "iframe.mediadelivery.net", "embed", "LIBRARY", "VIDEO_ID"]
+  const lib = parts[4] || "";
+  const id = (parts[5] || "").split("?")[0].split("#")[0] || "";
+  if (!lib || !id) return null;
+  return { lib, id };
+}
+
+function buildBunnyMp4(src: string, quality: string): string {
+  const p = parseBunny(src);
+  if (p) return `https://vz-${p.lib}.b-cdn.net/${p.id}/play_${quality}.mp4`;
   return src;
 }
 
@@ -38,20 +43,22 @@ function toPosterUrl(src: string, fallback: string): string {
   return "";
 }
 
-// ===== ONE VIDEO COMPONENT FOR ALL VIDEOS - NO IFRAME =====
+// ===== STEP 1: TikTokVideo - NO COVER, NO ROLL-ROLL, NATIVE CONTROLS =====
 function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [hasError, setHasError] = useState(false);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [hasStarted, setHasStarted] = useState(false);
-  const [retryKey, setRetryKey] = useState(0);
+  const [useIframe, setUseIframe] = useState(false);
+  const [qualityIndex, setQualityIndex] = useState(0);
+  const [posterOk, setPosterOk] = useState(true);
 
-  const directSrc = toDirectVideoUrl(src);
+  const isStream = src.includes("iframe.mediadelivery.net");
+  // Try in order: 720 -> 480 -> 360 -> 240 . No loop, one by one.
+  const qualities = ["720p", "480p", "360p", "240p"];
+  const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
   const poster = toPosterUrl(src, posterUrl || "");
 
-  // 1. Pause when scroll comot - THE MAIN FIX
+  // Pause when scroll comot
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -59,91 +66,65 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
       ([e]) => {
         if (!e.isIntersecting) {
           try { videoRef.current?.pause(); } catch {}
-          setIsPlaying(false);
         }
       },
       { threshold: 0.3 }
     );
     obs.observe(wrap);
     return () => obs.disconnect();
-  }, [directSrc]);
+  }, [directSrc, useIframe]);
 
-  // 2. If user pause from outside (another video play), update button
-  useEffect(() => {
-    const v = videoRef.current;
-    if (!v) return;
-    const onPause = () => setIsPlaying(false);
-    const onPlay = () => { setIsPlaying(true); setHasStarted(true); };
-    v.addEventListener("pause", onPause);
-    v.addEventListener("play", onPlay);
-    return () => { v.removeEventListener("pause", onPause); v.removeEventListener("play", onPlay); };
-  }, [retryKey, directSrc]);
-
-  const togglePlay = async () => {
-    const v = videoRef.current;
-    if (!v) return;
-    if (hasError) { setHasError(false); setRetryKey(k => k + 1); return; }
-    if (v.paused) {
-      pauseAllOthers(v);
-      try { await v.play(); } catch {}
-    } else {
-      v.pause();
+  const handleError = () => {
+    // Try next quality once
+    if (isStream && qualityIndex < qualities.length - 1) {
+      setQualityIndex((i) => i + 1);
+      return;
+    }
+    // All MP4 fail -> Bunny iframe player MUST play
+    if (isStream) {
+      setUseIframe(true);
+      return;
     }
   };
 
-  const handleRetry = () => {
-    setHasError(false);
-    setRetryKey(k => k + 1);
-    setTimeout(() => { try { videoRef.current?.load(); } catch {} }, 100);
-  };
+  // Iframe fallback - for old videos like Vikky own
+  if (useIframe) {
+    return (
+      <div className="relative w-full bg-black overflow-hidden" style={{ height: 380 }}>
+        <iframe src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen title="AFUED Video" />
+        <button onClick={() => { setUseIframe(false); setQualityIndex(0); }} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[10px] px-2 py-1 rounded-full">
+          Try MP4 again
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden">
+      {/* NO COVER BUTTON AGAIN. Video na the button. Controls go show. */}
       <video
-        key={retryKey}
+        key={`${qualityIndex}`}
         ref={videoRef}
         src={directSrc}
-        poster={poster || undefined}
+        poster={poster && posterOk ? poster : undefined}
         playsInline
         preload="metadata"
-        controls={hasStarted}
-        onError={() => setHasError(true)}
-        onPlay={() => { pauseAllOthers(videoRef.current); }}
-        className="w-full max-h-[520px] bg-black object-contain"
+        controls
+        onError={handleError}
+        onPlay={() => pauseAllOthers(videoRef.current)}
+        className="w-full max-h-[520px] min-h-[280px] bg-zinc-900 object-contain"
       />
 
-      {/* TAP TO PLAY COVER - No autoplay, no black, no mix */}
-      {!hasStarted && !hasError && (
-        <button onClick={togglePlay} className="absolute inset-0 z-20 flex h-full w-full items-center justify-center overflow-hidden bg-black text-white">
-          {poster ? (
-            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" />
-          ) : (
-            <div className="absolute inset-0 bg-zinc-900" />
-          )}
-          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/40">
-            <span className="flex h-16 w-16 items-center justify-center rounded-full bg-black/70 backdrop-blur border border-white/30">
-              <Play className="ml-1 h-8 w-8 fill-white text-white" />
-            </span>
-            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold backdrop-blur">Tap to Play ▶</span>
-          </div>
-        </button>
+      {/* If poster fail, show gradient behind - no black empty. Video controls still dey on top. */}
+      {!posterOk && (
+        <div className="pointer-events-none absolute inset-0 -z-0 flex items-center justify-center bg-gradient-to-br from-[#00a884]/40 via-zinc-900 to-black">
+          <span className="text-[80px] font-black text-white/20">{authorName.charAt(0).toUpperCase()}</span>
+        </div>
       )}
 
-      {/* Paused - show big play button again */}
-      {hasStarted && !isPlaying && !hasError && (
-        <button onClick={togglePlay} className="absolute inset-0 z-20 flex items-center justify-center bg-black/30">
-          <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 backdrop-blur">
-            <Play className="ml-1 h-7 w-7 fill-white text-white" />
-          </span>
-        </button>
-      )}
-
-      {hasError && (
-        <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white text-sm font-semibold gap-2">
-          <span className="text-3xl">↻</span>
-          <span>Video no load? Tap to try again</span>
-          <span className="text-xs text-white/70">E never delete, na network</span>
-        </button>
+      {/* Hidden img to check if poster dey work, if e fail we show gradient */}
+      {poster && (
+        <img src={poster} alt="" className="hidden" onError={() => setPosterOk(false)} />
       )}
 
       <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
@@ -386,4 +367,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-            }
+    }
