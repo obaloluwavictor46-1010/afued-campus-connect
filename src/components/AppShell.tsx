@@ -1,16 +1,40 @@
 import { Link, useNavigate } from "@tanstack/react-router";
-import { useEffect, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { Home, ShoppingBag, User, Loader2, MessageCircle, Megaphone, Shield, Users } from "lucide-react";
 import { useAuth } from "@/lib/auth";
 import { startPresence } from "@/lib/presence";
+import { supabase } from "@/lib/supabase";
 
 export function AppShell({ children, title, bare }: { children: ReactNode; title?: string; bare?: boolean }) {
   const { user, profile, loading } = useAuth();
   const navigate = useNavigate();
+
+  // 🔴 CHAT UNREAD COUNT - for Bottom Nav red dot
+  const [chatUnread, setChatUnread] = useState(0);
+
   useEffect(() => {
     if (!loading && !user) navigate({ to: "/auth", replace: true });
   }, [loading, user, navigate]);
   useEffect(() => { if (user) startPresence(user.id); }, [user]);
+
+  // 🔴 Load unread messages + live update
+  useEffect(() => {
+    if (!user) return;
+    const loadUnread = async () => {
+      const { count, error } = await supabase
+        .from("messages")
+        .select("id", { count: "exact", head: true })
+        .eq("receiver_id", user.id)
+        .is("read_at", null);
+      if (!error) setChatUnread(count ?? 0);
+    };
+    loadUnread();
+    const ch = supabase
+      .channel("appshell-unread")
+      .on("postgres_changes", { event: "*", schema: "public", table: "messages" }, loadUnread)
+      .subscribe();
+    return () => { supabase.removeChannel(ch); };
+  }, [user]);
 
   if (loading || !user)
     return (
@@ -21,7 +45,7 @@ export function AppShell({ children, title, bare }: { children: ReactNode; title
 
   if (bare) return <div className="mx-auto min-h-screen max-w-xl">{children}</div>;
 
-  const item = "flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium text-muted-foreground";
+  const item = "relative flex flex-1 flex-col items-center gap-1 py-2 text-[10px] font-medium text-muted-foreground";
   return (
     <div className="mx-auto min-h-screen max-w-xl pb-20">
       <header className="sticky top-0 z-30 flex items-center justify-between border-b bg-background/90 px-4 py-3 backdrop-blur">
@@ -46,8 +70,17 @@ export function AppShell({ children, title, bare }: { children: ReactNode; title
           <Link to="/announcements" className={item} activeProps={{ className: "!text-primary" }}>
             <Megaphone className="h-6 w-6" /> News
           </Link>
+          {/* 🔴 CHAT WITH RED DOT */}
           <Link to="/chat" className={item} activeProps={{ className: "!text-primary" }}>
-            <MessageCircle className="h-6 w-6" /> Chat
+            <span className="relative">
+              <MessageCircle className="h-6 w-6" />
+              {chatUnread > 0 && (
+                <span className="absolute -right-2.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[10px] font-extrabold text-white shadow ring-2 ring-white animate-pulse">
+                  {chatUnread > 99 ? "99+" : chatUnread}
+                </span>
+              )}
+            </span>
+            Chat
           </Link>
           <Link to="/marketplace" className={item} activeProps={{ className: "!text-primary" }}>
             <ShoppingBag className="h-6 w-6" /> Market
@@ -75,4 +108,4 @@ export function Avatar({ url, name, size = 40, online }: { url?: string | null |
       {online && <span className="absolute bottom-0 right-0 h-3 w-3 rounded-full border-2 border-card bg-online" />}
     </div>
   );
-}
+    }
