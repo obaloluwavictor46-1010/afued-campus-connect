@@ -22,14 +22,15 @@ export function fileNameFromUrl(url: string) {
 export type MediaKind = "image" | "video" | "audio" | "file"
 export function kindOfUrl(url: string): MediaKind {
   if (!url) return "file"
-  if (url.includes('iframe.mediadelivery.net')) return "video"
-  // FIX: Remove ?token=... & #t=... before checking extension - Supabase URLs get query
+  // FIX: Remove ?token=... & #t=... before checking extension
   const clean = url.split("?")[0].split("#")[0].toLowerCase()
   if (clean.match(/\.(mp4|mov|webm|avi|mkv|m4v)$/)) return "video"
   if (clean.match(/\.(mp3|wav|m4a|ogg|aac)$/)) return "audio"
   if (clean.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/)) return "image"
-  // FIX: Supabase / Bunny video wey no get extension but get video in path
-  if (url.includes("/video") || url.includes("video")) return "video"
+  // FIX: Bunny Storage video wey no get extension but get /videos/ for path
+  if (url.includes("/videos/")) return "video"
+  if (url.includes("/music/")) return "audio"
+  if (url.includes("/images/")) return "image"
   return "file"
 }
 
@@ -52,23 +53,20 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
-// === FIX 1: VIDEO WEY SHOW FACE QUICK, NO MORE BLACK 59s VIDEO ===
+// === VIDEO WEY SHOW FACE QUICK, NO MORE BLACK - Direct MP4 ===
 function SmartVideo({ url, className }: { url: string, className?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [showPlay, setShowPlay] = useState(true)
   const [poster, setPoster] = useState<string | undefined>(undefined)
 
-  // Jump to 0.8s where face dey, not 0s where e black, then capture that frame as poster
   const makePoster = () => {
     const v = videoRef.current
     if (!v) return
-    // If video short, use 0.1s, if long use 0.8s - 1.5s
     const target = v.duration > 2 ? 0.8 : 0.1
     if (Math.abs(v.currentTime - target) > 0.1) {
       v.currentTime = target
       return
     }
-    // Already for target, capture frame
     try {
       if (v.videoWidth > 0) {
         const c = document.createElement("canvas")
@@ -77,7 +75,6 @@ function SmartVideo({ url, className }: { url: string, className?: string }) {
         const ctx = c.getContext("2d")
         if (ctx) {
           ctx.drawImage(v, 0, 0)
-          // If frame still black (all dark), try 1.5s once
           const data = ctx.getImageData(0, 0, Math.min(20, c.width), Math.min(20, c.height)).data
           let bright = 0
           for (let i = 0; i < data.length; i += 4) bright += data[i] + data[i+1] + data[i+2]
@@ -130,14 +127,11 @@ function SmartVideo({ url, className }: { url: string, className?: string }) {
   )
 }
 
-// --- FIXED MediaView - FORCE STOP WHEN SCROLL COMOT ---
+// --- FIXED MediaView - Direct MP4 Only, No More Bunny Stream Iframe ---
 export function MediaView({ url, kind, name, className }: { url: string, kind?: MediaKind, name?: string, className?: string }) {
   const k = (kind as MediaKind) || kindOfUrl(url)
   const videoRef = useRef<HTMLVideoElement>(null)
-  const iframeRef = useRef<HTMLIFrameElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
-  const isStreamVideo = url?.includes('iframe.mediadelivery.net')
-  const savedSrc = useRef(url)
 
   useEffect(() => {
     const wrap = wrapRef.current
@@ -149,19 +143,6 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
         if (video && !entry.isIntersecting) {
           video.pause()
         }
-        const iframe = iframeRef.current
-        if (iframe && isStreamVideo) {
-          if (!entry.isIntersecting) {
-            if (iframe.src !== "about:blank") {
-              savedSrc.current = iframe.src
-              iframe.src = "about:blank"
-            }
-          } else {
-            if (iframe.src === "about:blank" && savedSrc.current) {
-              iframe.src = savedSrc.current
-            }
-          }
-        }
         if (k === "audio" && !entry.isIntersecting) {
           const audio = wrap.querySelector("audio")
           if (audio) (audio as HTMLAudioElement).pause()
@@ -172,29 +153,15 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
 
     observer.observe(wrap)
     return () => observer.disconnect()
-  }, [k, url, isStreamVideo])
+  }, [k, url])
 
   if (k === "file") return <FileChip url={url} name={name} className={className} />
   return (
     <div ref={wrapRef} className={`relative ${className}`}>
       {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" loading="lazy" />}
-      {k === "video" && (
-        isStreamVideo ? (
-          <iframe 
-            ref={iframeRef}
-            src={url} 
-            className="w-full rounded bg-black"
-            style={{ height: '380px', border: 0 }}
-            allow="autoplay; fullscreen" 
-            allowFullScreen
-            loading="lazy"
-          />
-        ) : (
-          <SmartVideo url={url} />
-        )
-      )}
+      {k === "video" && <SmartVideo url={url} />}
       {k === "audio" && <audio src={url} controls preload="metadata" className="w-full" />}
-      {k !== "audio" && !isStreamVideo && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white z-10" />}
+      {k !== "audio" && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white z-10" />}
     </div>
   )
 }
@@ -237,7 +204,6 @@ export function UploadBar({ pct }: { pct: number | null }) {
   return (<div className="mt-3"><div className="mb-1 text-xs font-semibold">{pct}%</div><div className="h-2 overflow-hidden rounded-full bg-muted"><div className="h-full rounded-full bg-primary" style={{ width: `${pct}%` }} /></div></div>)
 }
 
-// FIX: Thumb video preview - no more black for picked video
 function ThumbVideo({ file }: { file: File }) {
   const url = useMemo(() => URL.createObjectURL(file), [file])
   const ref = useRef<HTMLVideoElement>(null)
@@ -289,4 +255,4 @@ export function useMediaPicker(maxVideoMB = 500) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-  }
+    }
