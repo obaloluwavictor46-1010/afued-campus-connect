@@ -1,6 +1,6 @@
 import { useEffect, useState, useRef } from "react";
 import { formatDistanceToNow } from "date-fns";
-import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2 } from "lucide-react";
+import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2, Pin, PinOff } from "lucide-react";
 import { toast } from "sonner";
 import { Avatar } from "./AppShell";
 import { shortFaculty, supabase, type Profile } from "@/lib/supabase";
@@ -184,8 +184,6 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
 
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const { user } = useAuth();
-  // === FIXED: REAL LIKE FROM SUPABASE, NO MORE localStorage FAKE ===
-  // === FAST: Optimistic like - heart changes instantly, Supabase saves for background ===
   const [liked, setLiked] = useState(false);
   const [likeCount, setLikeCount] = useState(0);
   const [liking, setLiking] = useState(false);
@@ -195,8 +193,14 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const [repostCount, setRepostCount] = useState(0);
   const [myReposted, setMyReposted] = useState(false);
   const [reposting, setReposting] = useState(false);
+  // PIN STATE - added, no touch other logic
+  const [isPinned, setIsPinned] = useState(!!post.is_pinned);
+  const [pinning, setPinning] = useState(false);
+  const postOwnerId = post.user_id || post.author_id || post.profiles?.id || author?.id;
+  const isOwnPost = !!user?.id && !!postOwnerId && user.id === postOwnerId;
 
-  // Load real likes for this post
+  useEffect(() => { setIsPinned(!!post.is_pinned); }, [post.is_pinned]);
+
   const loadLikes = async () => {
     const { data, error } = await supabase.from("likes").select("id, user_id").eq("post_id", post.id);
     if (error) { console.log("LOAD LIKE ERROR:", error.code, error.message); return; }
@@ -204,7 +208,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     if (user?.id) setLiked((data || []).some((r: any) => r.user_id === user.id));
   };
 
-  // FAST: No realtime channel again - e dey make Feed heavy/slow. Load once only.
   useEffect(() => {
     loadLikes();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -213,7 +216,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const toggleLike = async () => {
     if (!user) { toast.error("Login first"); return; }
     if (liking) return;
-    // FAST: Change heart FIRST, no wait for Supabase
     const wasLiked = liked;
     setLiked(!wasLiked);
     setLikeCount(c => wasLiked ? Math.max(0, c - 1) : c + 1);
@@ -227,15 +229,38 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
         if (error) throw error;
       }
     } catch (e: any) {
-      // If e fail, revert back so count no lie
       setLiked(wasLiked);
       setLikeCount(c => wasLiked ? c + 1 : Math.max(0, c - 1));
       console.log("LIKE REAL ERROR:", e);
       if (e.code === "42P01") toast.error("Likes table never create yet - run likes SQL first");
       else if (e.code === "42501") toast.error("Policy still block am (42501) - run likes policy SQL again");
-      else if (e.code === "23505") { setLiked(true); setLikeCount(c => c); }
+      else if (e.code === "23505") { setLiked(true); }
       else toast.error(`Like failed: ${e.message || "Unknown"}`);
     } finally { setLiking(false); }
+  };
+
+  // PIN HANDLER - only 1 pinned post per user
+  const togglePin = async () => {
+    if (!user) { toast.error("Login first"); return; }
+    if (!isOwnPost) return;
+    if (pinning) return;
+    setPinning(true);
+    const newPinned = !isPinned;
+    setIsPinned(newPinned);
+    try {
+      if (newPinned) {
+        await supabase.from("posts").update({ is_pinned: false }).eq("user_id", user.id).eq("is_pinned", true);
+      }
+      const { error } = await supabase.from("posts").update({ is_pinned: newPinned }).eq("id", post.id);
+      if (error) throw error;
+      toast.success(newPinned ? "📌 Pinned! E go stay for top of your Profile" : "Unpinned");
+      if (newPinned) setTimeout(() => window.location.reload(), 600);
+    } catch (e: any) {
+      setIsPinned(!newPinned);
+      console.log("PIN ERROR:", e);
+      if (e.code === "42703") toast.error("Run Step 1 SQL first - is_pinned column never add yet");
+      else toast.error(`Pin failed: ${e.message || "Unknown"}`);
+    } finally { setPinning(false); }
   };
 
   useEffect(() => {
@@ -334,7 +359,12 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   };
 
   return (
-    <article ref={cardRef} className="overflow-hidden rounded-2xl border bg-card shadow-card">
+    <article ref={cardRef} className={`overflow-hidden rounded-2xl border bg-card shadow-card ${isPinned ? "ring-2 ring-amber-400/60" : ""}`}>
+      {isPinned && (
+        <div className="flex items-center gap-1.5 bg-amber-50 px-4 py-1.5 text-[11px] font-bold text-amber-700">
+          <Pin className="h-3 w-3 fill-amber-500 text-amber-500" /> Pinned Post
+        </div>
+      )}
       <div className="flex items-center gap-3 p-4">
         <div className="flex min-w-0 flex-1 items-center gap-3">
           <Avatar url={author?.avatar_url} name={author?.full_name} />
@@ -347,6 +377,16 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
           <span className="max-w-[45%] truncate rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-foreground">
             {shortFaculty(post.faculty_channel)}
           </span>
+        )}
+        {isOwnPost && (
+          <button
+            onClick={togglePin}
+            disabled={pinning}
+            title={isPinned ? "Unpin this post" : "Pin to top of Profile"}
+            className={`shrink-0 rounded-full p-2 transition active:scale-95 ${isPinned ? "bg-amber-100 text-amber-700" : "bg-zinc-100 text-zinc-600 hover:bg-zinc-200"}`}
+          >
+            {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+          </button>
         )}
       </div>
       {post.content && <p className="whitespace-pre-wrap px-4 pb-3 text-[15px] leading-relaxed">{post.content}</p>}
@@ -392,4 +432,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-    }
+       }
