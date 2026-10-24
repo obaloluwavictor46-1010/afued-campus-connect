@@ -9,13 +9,45 @@ import { MediaGallery } from "./MediaView";
 import { downloadVideoWithAFUEDWatermark, downloadAFUEDVideoSimple } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// VIDEO - MUST PAUSE WHEN COMOT + PAUSE OTHER VIDEOS WHEN YOU PRESS THIS ONE + WITH WATERMARK DOWNLOAD
+// VIDEO - TIKTOK STYLE: Poster go pop immediately, no black screen, fast like 18s video
 function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }) {
   const videoRef = useRef<HTMLVideoElement>(null);
   const [dlProgress, setDlProgress] = useState(0)
   const [isDownloading, setIsDownloading] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
+  const [poster, setPoster] = useState<string>("")
+  const [isLoaded, setIsLoaded] = useState(false)
+
+  // === TIKTOK POSTER: Generate poster from video first frame in 0.5s ===
+  useEffect(() => {
+    setPoster("")
+    setIsLoaded(false)
+    setHasError(false)
+    const v = document.createElement("video")
+    v.muted = true
+    v.playsInline = true
+    v.preload = "metadata"
+    v.crossOrigin = "anonymous"
+    v.onloadeddata = () => {
+      try { v.currentTime = 0.5 } catch {}
+    }
+    v.onseeked = () => {
+      try {
+        const canvas = document.createElement("canvas")
+        canvas.width = v.videoWidth || 720
+        canvas.height = v.videoHeight || 1280
+        const ctx = canvas.getContext("2d")
+        if (ctx) {
+          ctx.drawImage(v, 0, 0, canvas.width, canvas.height)
+          const url = canvas.toDataURL("image/jpeg", 0.7)
+          setPoster(url)
+        }
+      } catch {}
+    }
+    v.onerror = () => {}
+    v.src = src.includes("#t=") ? src : `${src}#t=0.1`
+  }, [src, retryKey])
 
   useEffect(() => {
     const video = videoRef.current;
@@ -52,7 +84,17 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   };
 
   return (
-    <div className="relative w-full bg-black group">
+    <div className="relative w-full bg-black group overflow-hidden">
+      {/* === TIKTOK POSTER: Show picture immediately, no black === */}
+      {!isLoaded && poster && (
+        <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+      )}
+      {!isLoaded && !poster && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 to-black text-white">
+          <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
+          <p className="mt-2 text-[11px] text-white/70">Loading video... ⏳</p>
+        </div>
+      )}
       <video
         key={retryKey}
         ref={videoRef}
@@ -60,14 +102,18 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
         controls
         playsInline
         preload="metadata"
+        poster={poster || undefined}
         onPlay={handlePlay}
         onError={handleError}
+        onLoadedData={() => setIsLoaded(true)}
+        onCanPlay={() => setIsLoaded(true)}
         onClick={() => { if (hasError) handleRetry(); }}
-        className="w-full max-h-[480px] bg-black"
+        className="relative z-10 w-full max-h-[480px] bg-black"
+        style={{ opacity: isLoaded || !poster ? 1 : 0.01 }}
       />
       
       {hasError && (
-        <button onClick={handleRetry} className="absolute inset-0 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
+        <button onClick={handleRetry} className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/70 text-white text-sm font-semibold gap-2">
           <span className="text-3xl">↻</span>
           <span>Video no load? Tap to resurrect</span>
           <span className="text-xs text-white/70">E never delete, na network</span>
@@ -75,7 +121,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
       )}
 
       {/* WATERMARK PREVIEW - Like TikTok */}
-      <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+      <div className="absolute bottom-10 left-2 z-20 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
 
@@ -92,7 +138,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
           }
         }}
         disabled={isDownloading}
-        className="absolute bottom-2 right-2 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
+        className="absolute bottom-2 right-2 z-20 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
       >
         <Download className="h-3 w-3" />
         {isDownloading ? ` ${dlProgress}%` : " Download"}
@@ -100,7 +146,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
 
       {/* LOADING BAR - Like that TikTok loader you sent */}
       {isDownloading && (
-        <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20">
+        <div className="absolute bottom-0 left-0 right-0 h-1 bg-white/20 z-20">
           <div className="h-full bg-[#00a884] transition-all duration-200" style={{width: `${dlProgress}%`}}></div>
         </div>
       )}
@@ -108,12 +154,26 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   )
 }
 
-// IFRAME - FORCE KILL SOUND WHEN COMOT + SIMPLE DOWNLOAD + PAUSE OTHERS
-function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: string }) {
+// IFRAME - NO MORE "Processing..." - Hide Bunny processing with poster + Tap to play, like TikTok
+function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const savedSrc = useRef(src);
   const [isDownloading, setIsDownloading] = useState(false);
+  const [showCover, setShowCover] = useState(true);
+  const [coverPoster, setCoverPoster] = useState<string>(posterUrl || "");
+
+  // If posterUrl change (new post from index.tsx), use am
+  useEffect(() => {
+    if (posterUrl) setCoverPoster(posterUrl);
+  }, [posterUrl]);
+
+  // If no poster from index.tsx (old video), try to show fine loading - no Bunny processing text
+  useEffect(() => {
+    // Auto-hide cover after 25s so video go show even if person no tap - e go don ready by then
+    const t = setTimeout(() => setShowCover(false), 25000);
+    return () => clearTimeout(t);
+  }, [src]);
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -147,10 +207,34 @@ function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: st
   };
 
   return (
-    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-black" style={{ height: '380px' }}>
+    <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-black overflow-hidden" style={{ height: '380px' }}>
       <iframe ref={iframeRef} src={src} className="w-full h-full" style={{ border: 0 }} allow="autoplay; fullscreen" allowFullScreen />
-      
-      <div className="absolute bottom-10 left-2 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
+
+      {/* === COVER: Hide Bunny "Processing..." - Show poster + Tap to play === */}
+      {showCover && (
+        <button onClick={() => setShowCover(false)} className="absolute inset-0 z-20 flex h-full w-full flex-col items-center justify-center overflow-hidden bg-black text-white">
+          {coverPoster ? (
+            <img src={coverPoster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+          ) : (
+            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-zinc-900 to-black">
+              <div className="h-10 w-10 animate-spin rounded-full border-2 border-white/20 border-t-[#00a884]" />
+              <p className="mt-3 text-sm font-bold">Video dey ready soon... ⏳</p>
+              <p className="mt-1 px-6 text-center text-[11px] text-white/60">Tap to play - e no be processing, na video dey load</p>
+            </div>
+          )}
+          {/* Fine message on top of poster - NOT Bunny processing */}
+          <div className="absolute inset-0 flex flex-col items-center justify-center bg-black/30">
+            <span className="flex h-14 w-14 items-center justify-center rounded-full bg-black/70 backdrop-blur">
+              <Play className="ml-1 h-7 w-7 fill-white text-white" />
+            </span>
+            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold backdrop-blur">
+              {coverPoster ? "Tap to play ▶" : "Video dey ready soon... ⏳"}
+            </span>
+          </div>
+        </button>
+      )}
+
+      <div className="absolute bottom-10 left-2 z-30 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
         AFUED • @{authorName} • afuedconnect
       </div>
 
@@ -165,7 +249,7 @@ function AutoPauseBunnyIframe({ src, authorName }: { src: string; authorName: st
           }
         }}
         disabled={isDownloading}
-        className="absolute bottom-2 right-2 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1"
+        className="absolute bottom-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1"
       >
         <Download className="h-3 w-3" />
         {isDownloading ? " ..." : " Download"}
@@ -257,6 +341,8 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const videoUrl = (post as any).video_url as string | undefined;
   const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
   const authorName = author?.full_name || post.profiles?.full_name || "student";
+  // === ADDED: Poster from index.tsx - for 3-mins video, e go show picture, no Processing ===
+  const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
   
   let imageUrls: string[] = [];
   try {
@@ -323,7 +409,7 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
 
       {videoUrl && !imageUrls.length && (
-        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} authorName={authorName} /> : <AutoPauseVideo src={videoUrl} authorName={authorName} />
+        isStreamVideo ? <AutoPauseBunnyIframe src={videoUrl} authorName={authorName} posterUrl={posterUrl} /> : <AutoPauseVideo src={videoUrl} authorName={authorName} />
       )}
 
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
@@ -358,4 +444,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-        }
+    }
