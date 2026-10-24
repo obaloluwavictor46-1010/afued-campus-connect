@@ -23,7 +23,6 @@ export const Route = createFileRoute("/")({
   component: Feed,
 });
 
-// === ADDED: Check video duration - Max 3 minutes ===
 function checkVideoDuration(file: File): Promise<{ ok: boolean; dur: number }> {
   return new Promise((resolve) => {
     if (!file.type?.startsWith("video/")) { resolve({ ok: true, dur: 0 }); return; }
@@ -41,7 +40,6 @@ function checkVideoDuration(file: File): Promise<{ ok: boolean; dur: number }> {
   });
 }
 
-// === ADDED: TIKTOK POSTER - Snap first frame of 3-mins video in 0.5s, so e no black ===
 function generateVideoPoster(file: File): Promise<string> {
   return new Promise((resolve) => {
     const url = URL.createObjectURL(file);
@@ -66,7 +64,7 @@ function generateVideoPoster(file: File): Promise<string> {
         } else { URL.revokeObjectURL(url); resolve(""); }
       } catch { URL.revokeObjectURL(url); resolve(""); }
     };
-    v.onerror = () => { URL.revokeObjectURL(url); resolve(""); }
+    v.onerror = () => { URL.revokeObjectURL(url); resolve(""); };
     setTimeout(() => { URL.revokeObjectURL(url); resolve(""); }, 2000);
     v.src = url;
   });
@@ -88,8 +86,6 @@ function FeedInner() {
   const [editingPost, setEditingPost] = useState<Post | null>(null);
   const [editContent, setEditContent] = useState("");
   const [deletingId, setDeletingId] = useState<string | null>(null);
-
-  // === ADDED: REPOST LIKE TIKTOK ===
   const [repostCounts, setRepostCounts] = useState<Record<string, number>>({});
   const [myReposts, setMyReposts] = useState<Set<string>>(new Set());
   const [repostBy, setRepostBy] = useState<Record<string, any[]>>({});
@@ -125,7 +121,6 @@ function FeedInner() {
     }
   };
 
-  // === FIXED: No more fake "table never create" lie. Show real error. ===
   const handleRepost = async (post: Post) => {
     if (!user) { toast.error("Login first"); return; }
     if (repostingId === post.id) return;
@@ -160,7 +155,7 @@ function FeedInner() {
     } finally { setRepostingId(null); }
   };
 
-  // === ADDED: Only 1 video go play at a time - top video go pause when you tap girl video ===
+  // === FIX 3: Only 1 video play + PAUSE when scroll comot ===
   useEffect(() => {
     const stopOthers = (e: any) => {
       const target = e.target as HTMLVideoElement;
@@ -170,10 +165,20 @@ function FeedInner() {
       });
     };
     document.addEventListener("play", stopOthers, true);
-    return () => document.removeEventListener("play", stopOthers, true);
+    const onScroll = () => {
+      document.querySelectorAll("video").forEach((v: any) => {
+        const r = v.getBoundingClientRect();
+        const visible = r.top < window.innerHeight * 0.8 && r.bottom > window.innerHeight * 0.2;
+        if (!visible && !v.paused) { try { v.pause(); } catch {} }
+      });
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => {
+      document.removeEventListener("play", stopOthers, true);
+      window.removeEventListener("scroll", onScroll);
+    };
   }, []);
 
-  // === FIXED: Fast play + auto-pause when scroll comot + resurrect dead video + TIKTOK POSTER - no black ===
   useEffect(() => {
     const obs = new IntersectionObserver((entries) => {
       entries.forEach((en) => {
@@ -182,7 +187,7 @@ function FeedInner() {
           try { v.pause(); } catch {}
         }
       });
-    }, { threshold: 0.2 });
+    }, { threshold: 0.5 });
     const patchVideos = () => {
       document.querySelectorAll("video").forEach((v: any) => {
         if (!v.getAttribute("data-patched")) {
@@ -341,14 +346,7 @@ function FeedInner() {
                   <div className="h-full w-full animate-pulse bg-primary" style={{ width: `${(p as any).uploadPct || 30}%` }} />
                 </div>
               )}
-              {(p as any).isUploading && (p as any).poster_url && (p as any).video_url && (
-                <div className="relative mb-[-8px] overflow-hidden rounded-t-2xl bg-black">
-                  <img src={(p as any).poster_url} alt="" className="h-56 w-full object-cover opacity-90" />
-                  <div className="absolute inset-0 flex items-center justify-center bg-black/30">
-                    <span className="rounded-full bg-black/70 px-4 py-2 text-xs font-bold text-white">⏳ Uploading 3-mins video... {(p as any).uploadPct || 5}%</span>
-                  </div>
-                </div>
-              )}
+              {/* FIX 2: DELETED the big black Processing overlay wey dey cover video face. Video itself go show now. */}
               <div className="absolute right-3 top-3 z-10">
                 <button
                   onClick={(e) => { e.stopPropagation(); setOpenMenu(openMenu === p.id ? null : p.id); }}
@@ -396,7 +394,15 @@ function FeedInner() {
                 <button onClick={() => setOpenPost(p.id)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">💬 {counts[p.id] ?? 0}</button>
                 <button onClick={() => handleShare(p)} className="rounded-full bg-muted px-4 py-2 text-xs font-bold text-muted-foreground">↗ Share</button>
               </div>
-              {(p as any).isUploading && <p className="px-4 pb-2 text-[11px] text-primary font-semibold">Uploading fast like WhatsApp... {(p as any).uploadPct || 0}% - No close app, e go show for everybody soon 🚀</p>}
+              {/* FIX 2: Progress UNDER video, no cover face again */}
+              {(p as any).isUploading && (
+                <div className="px-4 pb-3">
+                  <div className="h-1 w-full overflow-hidden rounded-full bg-muted">
+                    <div className="h-full bg-primary transition-all" style={{ width: `${(p as any).uploadPct || 0}%` }} />
+                  </div>
+                  <p className="mt-1 text-[10px] text-muted-foreground">{(p as any).uploadPct || 0}% uploading... e dey run for background</p>
+                </div>
+              )}
             </div>
             );
           })
@@ -559,6 +565,15 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         else if (isVideo) video_url = url;
         else image_urls.push(url);
       }
+      // === FIX 1: Upload poster to Bunny so e no loss after 100% ===
+      let finalPoster = "";
+      if (localPoster) {
+        try {
+          const blob = await fetch(localPoster).then(r => r.blob());
+          const posterFile = new File([blob], `poster-${Date.now()}.jpg`, { type: "image/jpeg" });
+          finalPoster = await uploadToBunny(posterFile, "images", () => {});
+        } catch { finalPoster = ""; }
+      }
       const { data, error } = await supabase.from("posts").insert({
         user_id: user.id,
         content: savedContent,
@@ -567,6 +582,8 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
         image_url: image_urls[0] || "",
         music_url: music_url,
         video_url: video_url,
+        poster_url: finalPoster,
+        thumbnail_url: finalPoster,
       } as any).select().single();
       if (error) throw error;
       onOptimisticReplace(tempId, { ...data, uploadPct: 100, isUploading: false });
@@ -626,7 +643,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
   );
 }
 
-// === FEED EDITOR V6 - MODERN WHATSAPP - NO MUSIC, NO STICKER - VIDEO TEXT BURNED INSIDE, NOT CAPTION ===
 async function getCroppedImg(imageSrc: string, pixelCrop: any) {
   const image = new Image();
   image.crossOrigin = "anonymous";
@@ -1066,4 +1082,4 @@ function FeedWhatsAppEditor({ imageUrl, isVideo, onCancel, onSend }: any){
       {isBurning && <p style={{textAlign:'center', color:'#00e676', fontSize:12, background:'#000', padding:'6px'}}>Burning text inside video... wait small ⏳</p>}
     </div>
   );
-          }
+      }
