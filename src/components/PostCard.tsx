@@ -8,11 +8,11 @@ import { MediaGallery } from "./MediaView";
 import { downloadAFUEDVideoSimple, getBunnyStreamPosterUrl, getBunnyVideoId } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// ===== GLOBAL: Only 1 fit play =====
-function pauseAllOthers(except?: HTMLMediaElement | null) {
-  document.querySelectorAll("video, audio").forEach((el: any) => {
-    if (el !== except) { try { el.pause(); } catch {} }
-  });
+// ===== SECRET 1: ONE GLOBAL PLAYER FOR WHOLE FEED - Like TikTok =====
+function setActiveVideo(id: string | null) {
+  (window as any).__AFUED_ACTIVE_VIDEO = id;
+  window.dispatchEvent(new CustomEvent("afued-active-change", { detail: { id } }));
+  document.querySelectorAll("video, audio").forEach((el: any) => { try { el.pause(); } catch {} });
 }
 
 function parseBunny(src: string) {
@@ -24,111 +24,96 @@ function parseBunny(src: string) {
   return { lib, id };
 }
 
+function buildBunnyHls(src: string): string {
+  const p = parseBunny(src);
+  // SECRET: HLS = small-small pieces, no be full MP4 download. Start quick, no black.
+  if (p) return `https://vz-${p.lib}.b-cdn.net/${p.id}/playlist.m3u8`;
+  return src;
+}
+
 function buildBunnyMp4(src: string, quality: string): string {
   const p = parseBunny(src);
   if (p) return `https://vz-${p.lib}.b-cdn.net/${p.id}/play_${quality}.mp4`;
   return src;
 }
 
-// ===== REAL FIX: Poster from Bunny link itself, no black =====
 function getPoster(src: string, fallback: string): string {
   if (fallback) return fallback;
   if (src.includes("iframe.mediadelivery.net")) {
-    try {
-      const p = getBunnyStreamPosterUrl(src);
-      if (p) return p;
-    } catch {}
+    try { const p = getBunnyStreamPosterUrl(src); if (p) return p; } catch {}
     const parsed = parseBunny(src);
     if (parsed) return `https://vz-${parsed.lib}.b-cdn.net/${parsed.id}/thumbnail.jpg`;
   }
   return "";
 }
 
-// ===== PERFECT TikTokVideo: Poster-First, No Iframe Until Play, Unload = Stop =====
-function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
+// ===== SECRET 2 + 3: Poster-First, No Iframe, One Active Video =====
+function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; authorName: string; posterUrl?: string; postId: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
-  const [started, setStarted] = useState(false);
-  const [useMp4, setUseMp4] = useState(false);
+  const [isActive, setIsActive] = useState(false);
+  const [useHls, setUseHls] = useState(true);
   const [qualityIndex, setQualityIndex] = useState(0);
   const [posterOk, setPosterOk] = useState(true);
 
   const isStream = src.includes("iframe.mediadelivery.net");
-  const qualities = ["720p", "480p", "360p", "240p"];
-  const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
+  const hlsSrc = isStream ? buildBunnyHls(src) : src;
+  const mp4Src = isStream ? buildBunnyMp4(src, ["720p", "480p", "360p", "240p"][qualityIndex] || "720p") : src;
+  const videoSrc = useHls ? hlsSrc : mp4Src;
   const poster = getPoster(src, posterUrl || "");
 
-  const stopAndShowPoster = () => {
-    try { videoRef.current?.pause(); } catch {}
-    if (started) setStarted(false);
-    setUseMp4(false);
-  };
-
-  // If another video start OR scroll comot, unload me -> back to picture
+  // If another video become active, I must go back to picture
   useEffect(() => {
-    if (!started) return;
-    const onOtherStart = (e: any) => {
-      if (e.detail && e.detail.src !== src) stopAndShowPoster();
+    const onChange = (e: any) => {
+      if (e.detail?.id !== postId) {
+        setIsActive(false);
+        try { videoRef.current?.pause(); } catch {}
+      }
     };
-    window.addEventListener("afued-video-start", onOtherStart as any);
+    window.addEventListener("afued-active-change", onChange as any);
+    return () => window.removeEventListener("afued-active-change", onChange as any);
+  }, [postId]);
 
-    const onAnyPlay = (e: any) => {
-      if (e.target !== videoRef.current) stopAndShowPoster();
-    };
-    document.addEventListener("play", onAnyPlay, true);
-
+  // Scroll comot = no be active again = back to picture, even if next post na picture
+  useEffect(() => {
+    if (!isActive) return;
     const wrap = wrapRef.current;
-    let obs: IntersectionObserver | null = null;
-    if (wrap) {
-      obs = new IntersectionObserver(
-        ([entry]) => { if (entry.intersectionRatio < 0.5) stopAndShowPoster(); },
-        { threshold: [0, 0.25, 0.5, 0.75, 1] }
-      );
-      obs.observe(wrap);
-    }
+    if (!wrap) return;
+    const obs = new IntersectionObserver(
+      ([entry]) => { if (entry.intersectionRatio < 0.5) setActiveVideo(null); },
+      { threshold: [0, 0.25, 0.5, 0.75, 1] }
+    );
+    obs.observe(wrap);
     const onScroll = () => {
-      if (!wrap) return;
       const rect = wrap.getBoundingClientRect();
       const h = window.innerHeight;
-      const visTop = Math.max(rect.top, 0);
-      const visBot = Math.min(rect.bottom, h);
-      const ratio = rect.height > 0 ? (visBot - visTop) / rect.height : 0;
-      if (ratio < 0.5) stopAndShowPoster();
+      const ratio = rect.height > 0 ? (Math.min(rect.bottom, h) - Math.max(rect.top, 0)) / rect.height : 0;
+      if (ratio < 0.5) setActiveVideo(null);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
     document.addEventListener("touchmove", onScroll, { passive: true });
-
-    return () => {
-      window.removeEventListener("afued-video-start", onOtherStart as any);
-      document.removeEventListener("play", onAnyPlay, true);
-      if (obs) obs.disconnect();
-      window.removeEventListener("scroll", onScroll);
-      document.removeEventListener("touchmove", onScroll);
-    };
-    // eslint-disable-next-line
-  }, [src, started]);
+    return () => { obs.disconnect(); window.removeEventListener("scroll", onScroll); document.removeEventListener("touchmove", onScroll); };
+  }, [isActive]);
 
   const handlePlay = () => {
-    pauseAllOthers(null);
-    window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src } }));
-    setUseMp4(true);
-    setStarted(true);
+    setUseHls(true);
+    setQualityIndex(0);
+    setIsActive(true);
+    setActiveVideo(postId);
   };
 
-  const handleMp4Error = () => {
-    if (isStream && qualityIndex < qualities.length - 1) {
-      setQualityIndex((i) => i + 1);
-      return;
-    }
-    // Big video MP4 fail -> use iframe, but only NOW, not on login
-    setUseMp4(false);
+  const handleError = () => {
+    if (useHls) { setUseHls(false); return; }
+    if (isStream && qualityIndex < 3) { setQualityIndex((i) => i + 1); return; }
   };
+
+  const handleStop = () => { setIsActive(false); setActiveVideo(null); };
 
   return (
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden" style={{ minHeight: 380 }}>
-      {/* STATE 1: NOT STARTED - PICTURE ONLY, NO BLACK, NO IFRAME */}
-      {!started && (
+      {/* NOT ACTIVE: Picture only, no video dey load, no black, same design for 13s and 2min */}
+      {!isActive && (
         <button onClick={handlePlay} className="relative block w-full text-left" style={{ height: 380 }}>
           {poster && posterOk ? (
             <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" onError={() => setPosterOk(false)} />
@@ -153,42 +138,22 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
         </button>
       )}
 
-      {/* STATE 2: STARTED + MP4 - Small 13s videos */}
-      {started && useMp4 && (
+      {/* ACTIVE: Only ONE video dey play for whole feed */}
+      {isActive && (
         <div className="relative w-full">
           <video
             ref={videoRef}
-            key={`${qualityIndex}`}
-            src={directSrc}
+            key={`${useHls}-${qualityIndex}`}
+            src={videoSrc}
             poster={poster || undefined}
             playsInline
             preload="metadata"
             controls
             autoPlay
-            onError={handleMp4Error}
-            onPlay={() => pauseAllOthers(videoRef.current)}
-            className="w-full max-h-[520px] min-h-[280px] bg-black object-contain"
+            onError={handleError}
+            className="w-full max-h-[520px] min-h-[380px] bg-black object-contain"
           />
-          <button onClick={stopAndShowPoster} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">
-            ✕ Stop
-          </button>
-        </div>
-      )}
-
-      {/* STATE 3: STARTED + MP4 FAIL -> IFRAME - Big 2min videos */}
-      {started && !useMp4 && (
-        <div className="relative w-full" style={{ height: 380 }}>
-          <iframe
-            src={src + (src.includes("?") ? "&" : "?") + "autoplay=true"}
-            className="w-full h-full"
-            style={{ border: 0 }}
-            allow="autoplay; fullscreen"
-            allowFullScreen
-            title="AFUED Video"
-          />
-          <button onClick={stopAndShowPoster} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">
-            ✕ Stop - Back to Picture
-          </button>
+          <button onClick={handleStop} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">✕ Stop</button>
         </div>
       )}
 
@@ -229,7 +194,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const authorName = author?.full_name || post.profiles?.full_name || "student";
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
-  // ===== STEP 4: 3-dot menu - FIXED position so overflow-hidden no fit cut am =====
+  // ===== 3-dot menu - FIXED so card no fit cut am =====
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, right: 16 });
   const [isEditing, setIsEditing] = useState(false);
@@ -238,7 +203,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
-  const menuBtnRef = useRef<HTMLButtonElement>(null);
 
   const openMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
@@ -252,7 +216,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   useEffect(() => {
     if (!menuOpen) return;
     const close = () => { setMenuOpen(false); setConfirmDelete(false); };
-    // Small delay so the same tap wey open menu no go close am immediately
     const t = setTimeout(() => {
       document.addEventListener("mousedown", close);
       document.addEventListener("touchstart", close);
@@ -285,7 +248,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     if (deleting) return;
     setDeleting(true);
     try {
-      window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src: "delete-" + post.id } }));
+      setActiveVideo(null);
       try { document.querySelectorAll("video, audio").forEach((el: any) => el.pause()); } catch {}
       const { error } = await supabase.from("posts").delete().eq("id", post.id);
       if (error) throw error;
@@ -427,12 +390,12 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     } finally { setReposting(false); }
   };
 
+  // Music join ONE player rule
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const onAudioPlay = () => {
-      document.querySelectorAll("video").forEach((v: any) => { try { v.pause(); } catch {} });
-      window.dispatchEvent(new CustomEvent("afued-video-start", { detail: { src: "music-" + post.id } }));
+      setActiveVideo(null);
       setPlaying(true);
     };
     const onAudioPause = () => setPlaying(false);
@@ -440,6 +403,16 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     audio.addEventListener("pause", onAudioPause);
     return () => { audio.removeEventListener("play", onAudioPlay); audio.removeEventListener("pause", onAudioPause); };
   }, [musicUrl]);
+
+  // If video become active, music must stop
+  useEffect(() => {
+    const onActive = () => {
+      const a = audioRef.current;
+      if (a && !a.paused) { a.pause(); setPlaying(false); }
+    };
+    window.addEventListener("afued-active-change", onActive as any);
+    return () => window.removeEventListener("afued-active-change", onActive as any);
+  }, []);
 
   useEffect(() => {
     const card = cardRef.current;
@@ -487,7 +460,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const togglePlay = () => {
     if (!audioRef.current) return;
     if (playing) { audioRef.current.pause(); setPlaying(false); }
-    else { pauseAllOthers(audioRef.current); audioRef.current.play(); setPlaying(true); }
+    else { setActiveVideo(null); audioRef.current.play(); setPlaying(true); }
   };
 
   return (
@@ -515,24 +488,13 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
             {isPinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
           </button>
         )}
-        <button
-          ref={menuBtnRef}
-          onClick={openMenu}
-          className="shrink-0 rounded-full p-2 hover:bg-zinc-100 active:scale-95 active:bg-zinc-200"
-          title="More"
-        >
+        <button onClick={openMenu} className="shrink-0 rounded-full p-2 hover:bg-zinc-100 active:scale-95 active:bg-zinc-200" title="More">
           <MoreVertical className="h-5 w-5 text-zinc-600" />
         </button>
       </div>
 
-      {/* ===== FIXED MENU - No card go cut am again ===== */}
       {menuOpen && (
-        <div
-          className="fixed z-[9999] w-56 overflow-hidden rounded-xl border bg-white shadow-2xl"
-          style={{ top: menuPos.top, right: menuPos.right }}
-          onClick={(e) => e.stopPropagation()}
-          onTouchStart={(e) => e.stopPropagation()}
-        >
+        <div className="fixed z-[9999] w-56 overflow-hidden rounded-xl border bg-white shadow-2xl" style={{ top: menuPos.top, right: menuPos.right }} onClick={(e) => e.stopPropagation()} onTouchStart={(e) => e.stopPropagation()}>
           {isOwnPost && (
             <>
               <button onClick={(e) => { e.stopPropagation(); setIsEditing(true); setMenuOpen(false); setEditText(post.content || ""); }} className="flex w-full items-center gap-3 px-4 py-3 text-left text-sm font-medium hover:bg-zinc-50 active:bg-zinc-100">
@@ -588,7 +550,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
         )}
       </div>
       {videoUrl && !imageUrls.length && (
-        <TikTokVideo src={videoUrl} authorName={authorName} posterUrl={posterUrl} />
+        <TikTokVideo src={videoUrl} authorName={authorName} posterUrl={posterUrl} postId={post.id} />
       )}
       {musicUrl && imageUrls.length === 0 && !videoUrl && (
         <div className="mx-4 mb-3 flex items-center gap-3 rounded-xl bg-gradient-to-r from-primary/20 to-accent/20 p-3 border">
@@ -619,4 +581,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-    }
+                                }
