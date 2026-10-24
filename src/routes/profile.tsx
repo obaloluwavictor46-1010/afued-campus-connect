@@ -252,4 +252,4 @@ function EditProfile({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-                                                                          }
+           }
