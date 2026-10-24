@@ -1,5 +1,4 @@
 import { useEffect, useState, useRef } from "react";
-import { Link } from "@tanstack/react-router";
 import { formatDistanceToNow } from "date-fns";
 import { Heart, MessageCircle, Play, Pause, Music2, Download, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
@@ -17,13 +16,7 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   const [isDownloading, setIsDownloading] = useState(false)
   const [hasError, setHasError] = useState(false)
   const [retryKey, setRetryKey] = useState(0)
-
-  // NO hidden video poster generation - Bunny blocks crossOrigin, na why poster always empty = black.
-  // Instead we use src + "#t=0.5" - browser go show frame for 0.5s as face, no Supabase needed.
   const displaySrc = src.includes("#t=") ? src : `${src}#t=0.5`;
-
-  // FIXED: Observer on wrapper, threshold 0.5, NO rootMargin.
-  // If less than half video dey screen -> pause immediately. No 800px delay again.
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -38,7 +31,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
     obs.observe(wrap);
     return () => obs.disconnect();
   }, [src, retryKey]);
-
   const handlePlay = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
       if (el !== videoRef.current) { try { el.pause(); } catch {} }
@@ -49,17 +41,14 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
       }
     });
   };
-
   const handleError = () => setHasError(true);
   const handleRetry = () => {
     setHasError(false);
     setRetryKey(k => k + 1);
     setTimeout(() => { try { videoRef.current?.load(); } catch {} }, 100);
   };
-
   return (
     <div ref={wrapRef} className="relative w-full bg-zinc-900 group overflow-hidden min-h-[280px]">
-      {/* Video always visible - no opacity 0.01, no spinner cover, no black blank */}
       <video
         key={retryKey}
         ref={videoRef}
@@ -103,7 +92,6 @@ function AutoPauseVideo({ src, authorName }: { src: string; authorName: string }
   )
 }
 
-// IFRAME - FIXED: ONE observer only. No double text. No blanking bug.
 function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -112,9 +100,7 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
   const [isNear, setIsNear] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [isVisible, setIsVisible] = useState(false);
-
   useEffect(() => { setShowCover(!!posterUrl); }, [posterUrl]);
-
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
@@ -135,21 +121,18 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
     obs.observe(wrap);
     return () => obs.disconnect();
   }, []);
-
   useEffect(() => {
     if (!isNear) return;
     if (!posterUrl) { setShowCover(false); return; }
     const t = setTimeout(() => { setIsReady(true); setShowCover(false); }, 1800);
     return () => clearTimeout(t);
   }, [isNear, posterUrl]);
-
   const handleWrapClick = () => {
     document.querySelectorAll('video, audio').forEach((el: any) => {
       try { (el as HTMLMediaElement).pause(); } catch {}
     });
     setShowCover(false);
   };
-
   return (
     <div ref={wrapRef} onClick={handleWrapClick} className="relative w-full bg-zinc-900 overflow-hidden" style={{ height: '380px' }}>
       {isNear ? (
@@ -201,8 +184,10 @@ function AutoPauseBunnyIframe({ src, authorName, posterUrl }: { src: string; aut
 
 export function PostCard({ post, author, commentCount, onComments }: { post: any; author?: Profile | undefined; commentCount: number; onComments: () => void }) {
   const { user } = useAuth();
-  const key = `afued-like-${post.id}`;
+  // === FIXED: REAL LIKE FROM SUPABASE, NO MORE localStorage FAKE ===
   const [liked, setLiked] = useState(false);
+  const [likeCount, setLikeCount] = useState(0);
+  const [liking, setLiking] = useState(false);
   const [playing, setPlaying] = useState(false);
   const audioRef = useRef<HTMLAudioElement>(null);
   const cardRef = useRef<HTMLElement>(null);
@@ -210,7 +195,45 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const [myReposted, setMyReposted] = useState(false);
   const [reposting, setReposting] = useState(false);
 
-  useEffect(() => setLiked(localStorage.getItem(key) === "1"), [key]);
+  // Load real likes for this post
+  const loadLikes = async () => {
+    const { data, error } = await supabase.from("likes").select("id, user_id").eq("post_id", post.id);
+    if (error) { console.log("LOAD LIKE ERROR:", error.code, error.message); return; }
+    setLikeCount((data || []).length);
+    if (user?.id) setLiked((data || []).some((r: any) => r.user_id === user.id));
+  };
+
+  useEffect(() => {
+    loadLikes();
+    const ch = supabase.channel(`likes-${post.id}`).on("postgres_changes", { event: "*", schema: "public", table: "likes", filter: `post_id=eq.${post.id}` }, loadLikes).subscribe();
+    return () => { supabase.removeChannel(ch); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [post.id, user?.id]);
+
+  const toggleLike = async () => {
+    if (!user) { toast.error("Login first"); return; }
+    if (liking) return;
+    setLiking(true);
+    try {
+      if (liked) {
+        const { error } = await supabase.from("likes").delete().eq("post_id", post.id).eq("user_id", user.id);
+        if (error) throw error;
+        setLiked(false);
+        setLikeCount(c => Math.max(0, c - 1));
+      } else {
+        const { error } = await supabase.from("likes").insert({ post_id: post.id, user_id: user.id });
+        if (error) throw error;
+        setLiked(true);
+        setLikeCount(c => c + 1);
+      }
+    } catch (e: any) {
+      console.log("LIKE REAL ERROR:", e);
+      if (e.code === "42P01") toast.error("Likes table never create yet - run likes SQL first");
+      else if (e.code === "42501") toast.error("Policy still block am (42501) - run likes policy SQL again");
+      else if (e.code === "23505") { setLiked(true); }
+      else toast.error(`Like failed: ${e.message || "Unknown"}`);
+    } finally { setLiking(false); }
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -276,8 +299,6 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => obs.disconnect();
   }, []);
   
-  const toggle = () => { localStorage.setItem(key, liked ? "0" : "1"); setLiked(!liked); };
-
   const musicUrl = (post as any).music_url as string | undefined;
   const videoUrl = (post as any).video_url as string | undefined;
   const isStreamVideo = videoUrl?.includes('iframe.mediadelivery.net');
@@ -313,13 +334,14 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   return (
     <article ref={cardRef} className="overflow-hidden rounded-2xl border bg-card shadow-card">
       <div className="flex items-center gap-3 p-4">
-        <Link to="/u/$userId" params={{ userId: post.user_id }} className="flex min-w-0 flex-1 items-center gap-3">
+        {/* FIXED: No more Link to /u/$userId - that route no exist, e dey cause 404. Now na div */}
+        <div className="flex min-w-0 flex-1 items-center gap-3">
           <Avatar url={author?.avatar_url} name={author?.full_name} />
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold hover:underline">{author?.full_name || "AFUED Student"}</p>
+            <p className="truncate font-semibold">{author?.full_name || "AFUED Student"}</p>
             <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.created_at), { addSuffix: true })}</p>
           </div>
-        </Link>
+        </div>
         {post.faculty_channel && (
           <span className="max-w-[45%] truncate rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-foreground">
             {shortFaculty(post.faculty_channel)}
@@ -353,9 +375,9 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       )}
       {musicUrl && <audio ref={audioRef} src={musicUrl} onEnded={() => setPlaying(false)} preload="none" />}
       <div className="flex items-center gap-5 px-4 py-3">
-        <button onClick={toggle} className="flex items-center gap-1.5 text-sm font-medium">
+        <button onClick={toggleLike} disabled={liking} className="flex items-center gap-1.5 text-sm font-medium">
           <Heart className={`h-6 w-6 transition ${liked ? "fill-like text-like scale-110" : ""}`} />
-          {liked ? 1 : 0}
+          {likeCount}
         </button>
         <button onClick={onComments} className="flex items-center gap-1.5 text-sm font-medium">
           <MessageCircle className="h-6 w-6" /> {commentCount}
