@@ -5,65 +5,47 @@ import { toast } from "sonner";
 import { Avatar } from "./AppShell";
 import { shortFaculty, supabase, type Profile } from "@/lib/supabase";
 import { MediaGallery } from "./MediaView";
-import { downloadAFUEDVideoSimple, getBunnyStreamPosterUrl, getBunnyVideoId } from "@/lib/bunny";
 import { useAuth } from "@/lib/auth";
 
-// ===== SECRET 1: ONE GLOBAL PLAYER FOR WHOLE FEED - Like TikTok =====
+// ===== ONE GLOBAL PLAYER FOR WHOLE FEED - Like TikTok =====
 function setActiveVideo(id: string | null) {
   (window as any).__AFUED_ACTIVE_VIDEO = id;
   window.dispatchEvent(new CustomEvent("afued-active-change", { detail: { id } }));
   document.querySelectorAll("video, audio").forEach((el: any) => { try { el.pause(); } catch {} });
 }
 
-function parseBunny(src: string) {
-  if (!src.includes("iframe.mediadelivery.net")) return null;
-  const parts = src.split("/");
-  const lib = parts[4] || "";
-  const id = (parts[5] || "").split("?")[0].split("#")[0] || "";
-  if (!lib || !id) return null;
-  return { lib, id };
-}
-
-function buildBunnyHls(src: string): string {
-  const p = parseBunny(src);
-  // SECRET: HLS = small-small pieces, no be full MP4 download. Start quick, no black.
-  if (p) return `https://vz-${p.lib}.b-cdn.net/${p.id}/playlist.m3u8`;
-  return src;
-}
-
-function buildBunnyMp4(src: string, quality: string): string {
-  const p = parseBunny(src);
-  if (p) return `https://vz-${p.lib}.b-cdn.net/${p.id}/play_${quality}.mp4`;
-  return src;
-}
-
-function getPoster(src: string, fallback: string): string {
-  if (fallback) return fallback;
-  if (src.includes("iframe.mediadelivery.net")) {
-    try { const p = getBunnyStreamPosterUrl(src); if (p) return p; } catch {}
-    const parsed = parseBunny(src);
-    if (parsed) return `https://vz-${parsed.lib}.b-cdn.net/${parsed.id}/thumbnail.jpg`;
+// Simple direct download for Bunny Storage MP4 - no Stream needed
+async function downloadDirectVideo(src: string, authorName: string) {
+  try {
+    const res = await fetch(src);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `AFUED-${authorName}-${Date.now()}.mp4`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 5000);
+    toast.success("Downloaded! ✅");
+  } catch {
+    window.open(src, "_blank");
   }
-  return "";
 }
 
-// ===== SECRET 2 + 3: Poster-First, No Iframe, One Active Video =====
+// ===== Poster-First, Direct MP4, One Active Video =====
 function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; authorName: string; posterUrl?: string; postId: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [useHls, setUseHls] = useState(true);
-  const [qualityIndex, setQualityIndex] = useState(0);
   const [posterOk, setPosterOk] = useState(true);
 
-  const isStream = src.includes("iframe.mediadelivery.net");
-  const hlsSrc = isStream ? buildBunnyHls(src) : src;
-  const mp4Src = isStream ? buildBunnyMp4(src, ["720p", "480p", "360p", "240p"][qualityIndex] || "720p") : src;
-  const videoSrc = useHls ? hlsSrc : mp4Src;
-  const poster = getPoster(src, posterUrl || "");
+  // NEW: src na direct MP4 from Bunny Storage - https://afued-storage.b-cdn.net/videos/...
+  // No HLS, no Stream, no cooking. E go play instantly.
+  const videoSrc = src;
+  const poster = posterUrl || "";
 
-  // If another video become active, I must go back to picture
   useEffect(() => {
     const onChange = (e: any) => {
       if (e.detail?.id !== postId) {
@@ -75,7 +57,6 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
     return () => window.removeEventListener("afued-active-change", onChange as any);
   }, [postId]);
 
-  // Scroll comot = no be active again = back to picture, even if next post na picture
   useEffect(() => {
     if (!isActive) return;
     const wrap = wrapRef.current;
@@ -97,22 +78,14 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
   }, [isActive]);
 
   const handlePlay = () => {
-    setUseHls(true);
-    setQualityIndex(0);
     setIsActive(true);
     setActiveVideo(postId);
-  };
-
-  const handleError = () => {
-    if (useHls) { setUseHls(false); return; }
-    if (isStream && qualityIndex < 3) { setQualityIndex((i) => i + 1); return; }
   };
 
   const handleStop = () => { setIsActive(false); setActiveVideo(null); };
 
   return (
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden" style={{ minHeight: 380 }}>
-      {/* NOT ACTIVE: Picture only, no video dey load, no black, same design for 13s and 2min */}
       {!isActive && (
         <button onClick={handlePlay} className="relative block w-full text-left" style={{ height: 380 }}>
           {poster && posterOk ? (
@@ -138,19 +111,16 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
         </button>
       )}
 
-      {/* ACTIVE: Only ONE video dey play for whole feed */}
       {isActive && (
         <div className="relative w-full">
           <video
             ref={videoRef}
-            key={`${useHls}-${qualityIndex}`}
             src={videoSrc}
             poster={poster || undefined}
             playsInline
-            preload="metadata"
+            preload="auto"
             controls
             autoPlay
-            onError={handleError}
             className="w-full max-h-[520px] min-h-[380px] bg-black object-contain"
           />
           <button onClick={handleStop} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">✕ Stop</button>
@@ -161,7 +131,7 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
         onClick={async (e) => {
           e.stopPropagation();
           setIsDownloading(true);
-          try { await downloadAFUEDVideoSimple(src, authorName); } finally { setIsDownloading(false); }
+          try { await downloadDirectVideo(src, authorName); } finally { setIsDownloading(false); }
         }}
         disabled={isDownloading}
         className="absolute bottom-2 right-2 z-30 bg-black/70 hover:bg-black/90 text-white text-[11px] px-3 py-1.5 rounded-full flex items-center gap-1 backdrop-blur"
@@ -194,7 +164,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const authorName = author?.full_name || post.profiles?.full_name || "student";
   const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
-  // ===== 3-dot menu - FIXED so card no fit cut am =====
   const [menuOpen, setMenuOpen] = useState(false);
   const [menuPos, setMenuPos] = useState({ top: 0, right: 16 });
   const [isEditing, setIsEditing] = useState(false);
@@ -390,7 +359,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     } finally { setReposting(false); }
   };
 
-  // Music join ONE player rule
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
@@ -404,7 +372,6 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
     return () => { audio.removeEventListener("play", onAudioPlay); audio.removeEventListener("pause", onAudioPause); };
   }, [musicUrl]);
 
-  // If video become active, music must stop
   useEffect(() => {
     const onActive = () => {
       const a = audioRef.current;
@@ -581,4 +548,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-                                }
+            }
