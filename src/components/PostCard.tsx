@@ -33,18 +33,55 @@ async function downloadDirectVideo(src: string, authorName: string) {
   }
 }
 
-// ===== Poster-First, Direct MP4, One Active Video =====
+// ===== Video go show its own pic, no more "Video dey inside" green screen =====
 function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; authorName: string; posterUrl?: string; postId: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [posterOk, setPosterOk] = useState(true);
+  const [autoPoster, setAutoPoster] = useState<string>(posterUrl || "");
 
-  // NEW: src na direct MP4 from Bunny Storage - https://afued-storage.b-cdn.net/videos/...
-  // No HLS, no Stream, no cooking. E go play instantly.
   const videoSrc = src;
-  const poster = posterUrl || "";
+  const poster = autoPoster;
+
+  // Generate real pic from video - jump to 0.8s where face dey, capture am
+  useEffect(() => {
+    if (posterUrl) { setAutoPoster(posterUrl); return; }
+    let cancelled = false;
+    const v = document.createElement("video");
+    v.src = src;
+    v.muted = true;
+    v.playsInline = true;
+    v.preload = "metadata";
+    v.crossOrigin = "anonymous";
+    const onLoaded = () => {
+      try { v.currentTime = v.duration > 2 ? 0.8 : 0.1; } catch {}
+    };
+    const onSeeked = () => {
+      if (cancelled) return;
+      try {
+        if (v.videoWidth === 0) return;
+        const c = document.createElement("canvas");
+        c.width = v.videoWidth;
+        c.height = v.videoHeight;
+        const ctx = c.getContext("2d");
+        if (!ctx) return;
+        ctx.drawImage(v, 0, 0);
+        const data = ctx.getImageData(0, 0, Math.min(20, c.width), Math.min(20, c.height)).data;
+        let bright = 0;
+        for (let i = 0; i < data.length; i += 4) bright += data[i] + data[i+1] + data[i+2];
+        const avg = bright / (data.length / 4);
+        if (avg < 12 && v.duration > 2 && v.currentTime < 1.4) {
+          v.currentTime = 1.5;
+          return;
+        }
+        setAutoPoster(c.toDataURL("image/jpeg", 0.75));
+      } catch {}
+    };
+    v.addEventListener("loadedmetadata", onLoaded);
+    v.addEventListener("seeked", onSeeked);
+    return () => { cancelled = true; v.removeEventListener("loadedmetadata", onLoaded); v.removeEventListener("seeked", onSeeked); v.src = ""; };
+  }, [src, posterUrl]);
 
   useEffect(() => {
     const onChange = (e: any) => {
@@ -88,24 +125,15 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden" style={{ minHeight: 380 }}>
       {!isActive && (
         <button onClick={handlePlay} className="relative block w-full text-left" style={{ height: 380 }}>
-          {poster && posterOk ? (
-            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" loading="lazy" onError={() => setPosterOk(false)} />
+          {poster ? (
+            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
           ) : (
-            <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-br from-[#00a884] via-zinc-900 to-black">
-              <span className="text-[90px] font-black leading-none text-white/30">{authorName.charAt(0).toUpperCase()}</span>
-              <span className="mt-2 px-4 text-center text-sm font-bold text-white/80">@{authorName}</span>
-              <span className="text-xs text-white/50">Video dey inside - Tap to Play</span>
-            </div>
+            <video src={`${videoSrc}#t=0.8`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
           )}
-          <div className="absolute inset-0 bg-black/20" />
-          <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <div className="absolute inset-0 flex items-center justify-center">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#FF5A1F] shadow-xl ring-4 ring-white/20 active:scale-95">
               <Play className="ml-1 h-8 w-8 fill-white text-white" />
             </span>
-            <span className="mt-3 rounded-full bg-black/70 px-4 py-1.5 text-xs font-bold text-white backdrop-blur">Tap to Play ▶</span>
-          </div>
-          <div className="absolute bottom-10 left-2 z-10 bg-black/60 text-white text-[10px] px-2 py-1 rounded-full pointer-events-none">
-            AFUED • @{authorName} • afuedconnect
           </div>
           <span className="absolute bottom-2 left-2 z-10 rounded bg-black/60 px-2 py-1 text-[10px] font-bold text-white">▶ VIDEO</span>
         </button>
@@ -548,4 +576,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-            }
+          }
