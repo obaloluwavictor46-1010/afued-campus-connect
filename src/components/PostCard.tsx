@@ -13,13 +13,12 @@ function pauseAllOthers(except?: HTMLMediaElement | null) {
   document.querySelectorAll("video, audio").forEach((el: any) => {
     if (el !== except) { try { el.pause(); } catch {} }
   });
-  // Also try pause Bunny iframes
   document.querySelectorAll("iframe").forEach((f: any) => {
     try { f.contentWindow?.postMessage({ action: "pause" }, "*"); } catch {}
   });
 }
 
-// ===== STEP 1 FIX: Build MP4 from video link itself, no Vercel wahala =====
+// ===== STEP 1: Build MP4 from video link itself =====
 function parseBunny(src: string) {
   if (!src.includes("iframe.mediadelivery.net")) return null;
   const parts = src.split("/");
@@ -44,7 +43,7 @@ function toPosterUrl(src: string, fallback: string): string {
   return "";
 }
 
-// ===== STEP 1 + STEP 2: TikTokVideo =====
+// ===== STEP 1 + 2 + 3: TikTokVideo =====
 function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: string; posterUrl?: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -58,21 +57,17 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
   const directSrc = isStream ? buildBunnyMp4(src, qualities[qualityIndex] || "720p") : src;
   const poster = toPosterUrl(src, posterUrl || "");
 
-  // ===== STEP 2 MAIN FIX: Global play listener =====
-  // If ANY video/audio for page start, pause this one. If MY OWN start, pause others.
-  // capture: true = we catch am before sound go mix even for 1 second.
+  // ===== STEP 2: Only 1 fit play =====
   useEffect(() => {
     const onAnyPlay = (e: any) => {
       const target = e.target as HTMLMediaElement;
       const mine = videoRef.current;
       if (!mine) return;
       if (target === mine) {
-        // Na my own dey play - pause everybody else
         document.querySelectorAll("video, audio").forEach((el: any) => {
           if (el !== mine) { try { el.pause(); } catch {} }
         });
       } else {
-        // Na another person dey play - pause mine
         if (!mine.paused) { try { mine.pause(); } catch {} }
       }
     };
@@ -80,20 +75,50 @@ function TikTokVideo({ src, authorName, posterUrl }: { src: string; authorName: 
     return () => document.removeEventListener("play", onAnyPlay, true);
   }, []);
 
-  // Pause when scroll comot - Step 3 go make am stronger, but keep this one for now
+  // ===== STEP 3 MAIN FIX: Scroll comot = Stop, even if next post na picture =====
   useEffect(() => {
     const wrap = wrapRef.current;
     if (!wrap) return;
+    const getVideo = () => videoRef.current;
+
+    // Check 1: Observer - if less than 50% visible, pause
     const obs = new IntersectionObserver(
-      ([e]) => {
-        if (!e.isIntersecting) {
-          try { videoRef.current?.pause(); } catch {}
+      ([entry]) => {
+        const v = getVideo();
+        if (!v) return;
+        // intersectionRatio = how much dey show (0 to 1)
+        // If e less than 0.5 (half), pause am
+        if (entry.intersectionRatio < 0.5 && !v.paused) {
+          try { v.pause(); } catch {}
         }
       },
-      { threshold: 0.3 }
+      { threshold: [0, 0.25, 0.5, 0.75, 1] }
     );
     obs.observe(wrap);
-    return () => obs.disconnect();
+
+    // Check 2: Scroll + Touch backup - catch "second post na picture" case
+    // This one no dey wait for observer, e dey check as you dey scroll
+    const onScroll = () => {
+      const v = getVideo();
+      if (!v || v.paused) return;
+      const rect = wrap.getBoundingClientRect();
+      const windowH = window.innerHeight;
+      const visibleTop = Math.max(rect.top, 0);
+      const visibleBottom = Math.min(rect.bottom, windowH);
+      const visibleHeight = visibleBottom - visibleTop;
+      const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
+      if (visibleRatio < 0.5) {
+        try { v.pause(); } catch {}
+      }
+    };
+    window.addEventListener("scroll", onScroll, { passive: true });
+    document.addEventListener("touchmove", onScroll, { passive: true });
+
+    return () => {
+      obs.disconnect();
+      window.removeEventListener("scroll", onScroll);
+      document.removeEventListener("touchmove", onScroll);
+    };
   }, [directSrc, useIframe]);
 
   const handleError = () => {
@@ -174,6 +199,12 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
   const [pinning, setPinning] = useState(false);
   const postOwnerId = post.user_id || post.author_id || post.profiles?.id || author?.id;
   const isOwnPost = !!user?.id && !!postOwnerId && user.id === postOwnerId;
+
+  // FIX: Define musicUrl / videoUrl early, before any useEffect use am
+  const musicUrl = (post as any).music_url as string | undefined;
+  const videoUrl = (post as any).video_url as string | undefined;
+  const authorName = author?.full_name || post.profiles?.full_name || "student";
+  const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
   useEffect(() => { setIsPinned(!!post.is_pinned); }, [post.is_pinned]);
 
@@ -275,13 +306,11 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     } finally { setReposting(false); }
   };
 
-  // ===== STEP 2: Music audio self go join the "only 1 play" rule =====
-  // If video start, music go pause. If music start, video go pause.
+  // STEP 2: Music audio join only-1-play rule
   useEffect(() => {
     const audio = audioRef.current;
     if (!audio) return;
     const onAudioPlay = () => {
-      // Music start - pause all videos
       document.querySelectorAll("video").forEach((v: any) => { try { v.pause(); } catch {} });
       setPlaying(true);
     };
@@ -291,22 +320,37 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
     return () => { audio.removeEventListener("play", onAudioPlay); audio.removeEventListener("pause", onAudioPause); };
   }, [musicUrl]);
 
+  // STEP 3 for MUSIC too: scroll comot card = music stop, even if next post na picture
   useEffect(() => {
     const card = cardRef.current;
-    const audio = audioRef.current;
     if (!card) return;
+    const onScrollMusic = () => {
+      const audio = audioRef.current;
+      if (!audio || audio.paused) return;
+      const rect = card.getBoundingClientRect();
+      const windowH = window.innerHeight;
+      const visibleTop = Math.max(rect.top, 0);
+      const visibleBottom = Math.min(rect.bottom, windowH);
+      const visibleHeight = visibleBottom - visibleTop;
+      const visibleRatio = rect.height > 0 ? visibleHeight / rect.height : 0;
+      if (visibleRatio < 0.3) { audio.pause(); setPlaying(false); }
+    };
     const obs = new IntersectionObserver(
-      ([entry]) => { if (!entry.isIntersecting && audio) { audio.pause(); setPlaying(false); } },
+      ([entry]) => {
+        const audio = audioRef.current;
+        if (!entry.isIntersecting && audio) { audio.pause(); setPlaying(false); }
+      },
       { threshold: 0 }
     );
     obs.observe(card);
-    return () => obs.disconnect();
+    window.addEventListener("scroll", onScrollMusic, { passive: true });
+    document.addEventListener("touchmove", onScrollMusic, { passive: true });
+    return () => {
+      obs.disconnect();
+      window.removeEventListener("scroll", onScrollMusic);
+      document.removeEventListener("touchmove", onScrollMusic);
+    };
   }, []);
-
-  const musicUrl = (post as any).music_url as string | undefined;
-  const videoUrl = (post as any).video_url as string | undefined;
-  const authorName = author?.full_name || post.profiles?.full_name || "student";
-  const posterUrl = (post as any).poster_url || (post as any).thumbnail_url || "";
 
   let imageUrls: string[] = [];
   try {
@@ -396,4 +440,4 @@ export function PostCard({ post, author, commentCount, onComments }: { post: any
       </div>
     </article>
   );
-        }
+            }
