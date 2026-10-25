@@ -1,5 +1,5 @@
 {
-  "buildCommand": "bun run build || true; rm -rf .vercel/output; mkdir -p dist-static; cp -r dist/client/. dist-static/ 2>/dev/null || cp -r .output/public/. dist-static/ 2>/dev/null || true; ls dist-static",
+  "buildCommand": "bun run build || true; mkdir -p dist-static; cp -r .vercel/output/static/. dist-static/ 2>/dev/null || cp -r dist/client/. dist-static/ 2>/dev/null || cp -r .output/public/. dist-static/ 2>/dev/null || true; rm -rf .vercel/output; ls dist-static",
   "outputDirectory": "dist-static",
   "framework": null,
   "cleanUrls": true,
