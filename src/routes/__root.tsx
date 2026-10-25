@@ -8,20 +8,18 @@ import {
   Scripts,
   type ErrorComponentProps,
 } from "@tanstack/react-router";
-import { useEffect, type ReactNode, Component } from "react";
+import { type ReactNode, Component } from "react";
 
 import appCss from "../styles.css?url";
-import { reportLovableError } from "../lib/lovable-error-reporting";
 import { AuthProvider } from "../lib/auth";
 import { Toaster } from "../components/ui/sonner";
 
-// === CRASH PROTECTION - THIS GO SAVE YOUR APP ===
-class AppErrorBoundary extends Component<{children: ReactNode}, {hasError: boolean}> {
+// === CRASH PROTECTION ===
+class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error: any) { 
+  componentDidCatch(error: any) {
     console.log("App crash caught:", error);
-    try { reportLovableError(error, { boundary: "app_error_boundary" }); } catch {}
   }
   render() {
     if (this.state.hasError) {
@@ -32,7 +30,7 @@ class AppErrorBoundary extends Component<{children: ReactNode}, {hasError: boole
             <h2 className="mt-2 text-[16px] font-bold">Small glitch!</h2>
             <p className="mt-1 text-[13px] text-[#667781]">App jam small, but your data safe. Tap reload.</p>
             <button
-              onClick={() => { this.setState({hasError:false}); location.reload(); }}
+              onClick={() => { this.setState({ hasError: false }); location.reload(); }}
               className="mt-4 w-full rounded-full bg-[#075e54] py-2.5 text-[14px] font-bold text-white"
             >
               Reload App
@@ -70,10 +68,6 @@ function NotFoundComponent() {
 function ErrorComponent({ error, reset }: ErrorComponentProps) {
   console.error(error);
   const router = useRouter();
-  useEffect(() => {
-    try { reportLovableError(error, { boundary: "tanstack_root_error_component" }); } catch {}
-  }, [error]);
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
@@ -151,21 +145,6 @@ function RootShell({ children }: { children: ReactNode }) {
 
 function RootComponent() {
   const { queryClient } = Route.useRouteContext();
-
-  // Prevent app crash from unhandled promise
-  useEffect(()=>{
-    const handler = (e: any) => {
-      console.log("Caught unhandled error:", e.reason || e.message);
-      e.preventDefault();
-    };
-    window.addEventListener("unhandledrejection", handler);
-    window.addEventListener("error", handler);
-    return ()=> {
-      window.removeEventListener("unhandledrejection", handler);
-      window.removeEventListener("error", handler);
-    }
-  },[])
-
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
@@ -174,7 +153,6 @@ function RootComponent() {
             <div className="flex-1">
               <Outlet />
             </div>
-            
             <footer className="border-t bg-white px-4 py-3 text-center">
               <div className="mx-auto max-w-[480px]">
                 <div className="flex justify-center gap-4 text-[11px] text-[#667781]">
@@ -198,4 +176,4 @@ function RootComponent() {
       </AuthProvider>
     </QueryClientProvider>
   );
-    }
+          }
