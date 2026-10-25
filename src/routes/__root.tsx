@@ -9,18 +9,14 @@ import {
   type ErrorComponentProps,
 } from "@tanstack/react-router";
 import { type ReactNode, Component } from "react";
-
 import appCss from "../styles.css?url";
 import { AuthProvider } from "../lib/auth";
 import { Toaster } from "../components/ui/sonner";
 
-// === CRASH PROTECTION ===
 class AppErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
   state = { hasError: false };
   static getDerivedStateFromError() { return { hasError: true }; }
-  componentDidCatch(error: any) {
-    console.log("App crash caught:", error);
-  }
+  componentDidCatch(error: any) { console.log("App crash caught:", error); }
   render() {
     if (this.state.hasError) {
       return (
@@ -49,16 +45,9 @@ function NotFoundComponent() {
       <div className="max-w-md text-center">
         <h1 className="text-7xl font-bold text-foreground">404</h1>
         <h2 className="mt-4 text-xl font-semibold text-foreground">Page not found</h2>
-        <p className="mt-2 text-sm text-muted-foreground">
-          The page you're looking for doesn't exist or has been moved.
-        </p>
+        <p className="mt-2 text-sm text-muted-foreground">The page you're looking for doesn't exist or has been moved.</p>
         <div className="mt-6">
-          <Link
-            to="/"
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Go home
-          </Link>
+          <Link to="/" className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">Go home</Link>
         </div>
       </div>
     </div>
@@ -71,28 +60,11 @@ function ErrorComponent({ error, reset }: ErrorComponentProps) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="max-w-md text-center">
-        <h1 className="text-xl font-semibold tracking-tight text-foreground">
-          This page didn't load
-        </h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Something went wrong. Try again - no data lost.
-        </p>
+        <h1 className="text-xl font-semibold tracking-tight text-foreground">This page didn't load</h1>
+        <p className="mt-2 text-sm text-muted-foreground">Something went wrong. Try again - no data lost.</p>
         <div className="mt-6 flex flex-wrap justify-center gap-2">
-          <button
-            onClick={() => {
-              try { router.invalidate(); } catch {}
-              reset();
-            }}
-            className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90"
-          >
-            Try again
-          </button>
-          <a
-            href="/"
-            className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent"
-          >
-            Go home
-          </a>
+          <button onClick={() => { try { router.invalidate(); } catch {} reset(); }} className="inline-flex items-center justify-center rounded-md bg-primary px-4 py-2 text-sm font-medium text-primary-foreground transition-colors hover:bg-primary/90">Try again</button>
+          <a href="/" className="inline-flex items-center justify-center rounded-md border border-input bg-background px-4 py-2 text-sm font-medium text-foreground transition-colors hover:bg-accent">Go home</a>
         </div>
       </div>
     </div>
@@ -132,9 +104,7 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
 function RootShell({ children }: { children: ReactNode }) {
   return (
     <html lang="en">
-      <head>
-        <HeadContent />
-      </head>
+      <head><HeadContent /></head>
       <body>
         <AppErrorBoundary>{children}</AppErrorBoundary>
         <Scripts />
@@ -150,9 +120,7 @@ function RootComponent() {
       <AuthProvider>
         <AppErrorBoundary>
           <div className="flex min-h-screen flex-col">
-            <div className="flex-1">
-              <Outlet />
-            </div>
+            <div className="flex-1"><Outlet /></div>
             <footer className="border-t bg-white px-4 py-3 text-center">
               <div className="mx-auto max-w-[480px]">
                 <div className="flex justify-center gap-4 text-[11px] text-[#667781]">
@@ -162,12 +130,8 @@ function RootComponent() {
                   <span>•</span>
                   <a href="mailto:afuedconnect@gmail.com" className="hover:text-[#00a884] hover:underline">Contact</a>
                 </div>
-                <div className="mt-1 text-[10px] text-[#8696a0]">
-                  © 2026 AFUED Community • Official Campus App • Safe & Secure • No credit card required
-                </div>
-                <div className="mt-1 text-[9px] text-[#8696a0]">
-                  Made for AFUED students in Ondo • Adeyemi Federal University of Education
-                </div>
+                <div className="mt-1 text-[10px] text-[#8696a0]">© 2026 AFUED Community • Official Campus App • Safe & Secure • No credit card required</div>
+                <div className="mt-1 text-[9px] text-[#8696a0]">Made for AFUED students in Ondo • Adeyemi Federal University of Education</div>
               </div>
             </footer>
           </div>
@@ -176,4 +140,4 @@ function RootComponent() {
       </AuthProvider>
     </QueryClientProvider>
   );
-          }
+}
