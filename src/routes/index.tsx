@@ -84,7 +84,6 @@ function FeedInner() {
   const [repostBy, setRepostBy] = useState<Record<string, any[]>>({});
   const [repostingId, setRepostingId] = useState<string | null>(null);
   const [newCount, setNewCount] = useState(0);
-  // STEP 1 - Pagination state
   const [page, setPage] = useState(0);
   const [hasMore, setHasMore] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
@@ -149,8 +148,6 @@ function FeedInner() {
     } finally { setRepostingId(null); }
   };
 
-  // NO WATCHDOG HERE AGAIN - PostCard.tsx don handle pause. Watchdog dey fight am before.
-
   const load = async (reset = true) => {
     const targetPage = reset ? 0 : pageRef.current;
     const from = targetPage * PAGE_SIZE;
@@ -173,7 +170,8 @@ function FeedInner() {
       }
     });
     if (list.length) {
-      setProfiles(prev => ({ ...prev, ...(await fetchProfiles(list.map((p) => p.user_id))) }));
+      const newProfiles = await fetchProfiles(list.map((p) => p.user_id));
+      setProfiles(prev => ({ ...prev, ...newProfiles }));
       const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
       const m: Record<string, number> = {};
       (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
@@ -204,7 +202,8 @@ function FeedInner() {
       return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
     });
     if (list.length) {
-      setProfiles(prev => ({ ...prev, ...(await fetchProfiles(list.map((p) => p.user_id))) }));
+      const newProfiles = await fetchProfiles(list.map((p) => p.user_id));
+      setProfiles(prev => ({ ...prev, ...newProfiles }));
       const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
       const m: Record<string, number> = {};
       (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
@@ -241,7 +240,6 @@ function FeedInner() {
 
   const showNewPosts = async () => { setNewCount(0); pageRef.current = 0; setPage(0); await load(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
-  // PROFILE CLICK - FIXED: use ?userId= to match new profile.tsx, no TanStack navigate, no build crash
   const goToProfile = (postUserId: string) => {
     if (postUserId === user?.id) {
       window.location.href = `/profile`;
@@ -267,7 +265,6 @@ function FeedInner() {
     return () => { supabase.removeChannel(ch); };
   }, [channel]);
 
-  // STEP 1 - Auto load more when scroll reach bottom
   useEffect(() => {
     const el = loadMoreRef.current;
     if (!el) return;
@@ -356,7 +353,6 @@ function FeedInner() {
             );
           })
         )}
-        {/* STEP 1 - Load More Trigger */}
         {!loading && visiblePosts.length > 0 && (
           <div ref={loadMoreRef} className="flex justify-center py-4">
             {loadingMore ? (
@@ -432,7 +428,6 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
     let filesToUpload: any[] = editedFiles.length > 0 ? [...editedFiles] : [...picker.files];
-    // STEP 2 - Compress images before upload (video/music no touch) - silent
     const compressed: any[] = [];
     for (const f of filesToUpload) {
       if ((f as any).type?.startsWith("image/")) {
