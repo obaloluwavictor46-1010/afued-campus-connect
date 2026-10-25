@@ -201,6 +201,18 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const [deleting, setDeleting] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
 
+  // FIX: Press Vikky avatar/name -> go her profile
+  const goToProfile = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    const targetId = postOwnerId;
+    if (!targetId) return;
+    if (targetId === user?.id) {
+      window.location.href = `/profile`;
+      return;
+    }
+    window.location.href = `/profile/${targetId}`;
+  };
+
   const openMenu = (e: React.MouseEvent) => {
     e.stopPropagation();
     if (menuOpen) { setMenuOpen(false); return; }
@@ -466,13 +478,13 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
         </div>
       )}
       <div className="flex items-center gap-3 p-4">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
+        <button onClick={goToProfile} className="flex min-w-0 flex-1 items-center gap-3 text-left active:opacity-70" title="View profile">
           <Avatar url={author?.avatar_url} name={author?.full_name} />
           <div className="min-w-0 flex-1">
-            <p className="truncate font-semibold">{author?.full_name || "AFUED Student"}</p>
+            <p className="truncate font-semibold hover:underline">{author?.full_name || "AFUED Student"}</p>
             <p className="text-xs text-muted-foreground">{formatDistanceToNow(new Date(post.created_at), { addSuffix: true })}</p>
           </div>
-        </div>
+        </button>
         {post.faculty_channel && (
           <span className="max-w-[45%] truncate rounded-full bg-accent px-2.5 py-1 text-[11px] font-semibold text-accent-foreground">
             {shortFaculty(post.faculty_channel)}
@@ -576,4 +588,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-          }
+      }
