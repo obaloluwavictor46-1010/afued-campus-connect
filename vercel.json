@@ -1,7 +1,0 @@
-{
-  "buildCommand": "vite build || true",
-  "outputDirectory": "dist/client",
-  "framework": null,
-  "cleanUrls": true,
-  "rewrites": [{ "source": "/((?!.*\\..*|index\\.html).*)", "destination": "/index.html" }]
-}
