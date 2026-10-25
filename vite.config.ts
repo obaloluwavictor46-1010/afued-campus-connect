@@ -5,8 +5,15 @@ export default defineConfig({
     spa: {
       enabled: true,
     },
+    prerender: {
+      enabled: false,
+    },
   },
   nitro: {
     preset: "static",
+    prerender: {
+      routes: [],
+      crawlLinks: false,
+    },
   },
 });
