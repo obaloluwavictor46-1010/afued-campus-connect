@@ -14,79 +14,39 @@ function setActiveVideo(id: string | null) {
   document.querySelectorAll("video, audio").forEach((el: any) => { try { el.pause(); } catch {} });
 }
 
-// Simple direct download for Bunny Storage MP4 - no Stream needed
+// Simple direct download - no fetch blob, no load full video for memory
 async function downloadDirectVideo(src: string, authorName: string) {
   try {
-    const res = await fetch(src);
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
+    a.href = src;
     a.download = `AFUED-${authorName}-${Date.now()}.mp4`;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 5000);
-    toast.success("Downloaded! ✅");
+    toast.success("Download started! ✅");
   } catch {
     window.open(src, "_blank");
   }
 }
 
-// ===== Video go show its own pic, no more "Video dey inside" green screen =====
+// ===== FIXED VIDEO PLAYER - 1 play button, lazy load, poster always =====
 function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; authorName: string; posterUrl?: string; postId: string }) {
   const wrapRef = useRef<HTMLDivElement>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
   const [isDownloading, setIsDownloading] = useState(false);
   const [isActive, setIsActive] = useState(false);
-  const [autoPoster, setAutoPoster] = useState<string>(posterUrl || "");
+  const [isPaused, setIsPaused] = useState(false);
 
   const videoSrc = src;
-  const poster = autoPoster;
-
-  // Generate real pic from video - jump to 0.8s where face dey, capture am
-  useEffect(() => {
-    if (posterUrl) { setAutoPoster(posterUrl); return; }
-    let cancelled = false;
-    const v = document.createElement("video");
-    v.src = src;
-    v.muted = true;
-    v.playsInline = true;
-    v.preload = "metadata";
-    v.crossOrigin = "anonymous";
-    const onLoaded = () => {
-      try { v.currentTime = v.duration > 2 ? 0.8 : 0.1; } catch {}
-    };
-    const onSeeked = () => {
-      if (cancelled) return;
-      try {
-        if (v.videoWidth === 0) return;
-        const c = document.createElement("canvas");
-        c.width = v.videoWidth;
-        c.height = v.videoHeight;
-        const ctx = c.getContext("2d");
-        if (!ctx) return;
-        ctx.drawImage(v, 0, 0);
-        const data = ctx.getImageData(0, 0, Math.min(20, c.width), Math.min(20, c.height)).data;
-        let bright = 0;
-        for (let i = 0; i < data.length; i += 4) bright += data[i] + data[i+1] + data[i+2];
-        const avg = bright / (data.length / 4);
-        if (avg < 12 && v.duration > 2 && v.currentTime < 1.4) {
-          v.currentTime = 1.5;
-          return;
-        }
-        setAutoPoster(c.toDataURL("image/jpeg", 0.75));
-      } catch {}
-    };
-    v.addEventListener("loadedmetadata", onLoaded);
-    v.addEventListener("seeked", onSeeked);
-    return () => { cancelled = true; v.removeEventListener("loadedmetadata", onLoaded); v.removeEventListener("seeked", onSeeked); v.src = ""; };
-  }, [src, posterUrl]);
+  const poster = posterUrl || "";
 
   useEffect(() => {
     const onChange = (e: any) => {
       if (e.detail?.id !== postId) {
         setIsActive(false);
+        setIsPaused(false);
         try { videoRef.current?.pause(); } catch {}
       }
     };
@@ -116,19 +76,29 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
 
   const handlePlay = () => {
     setIsActive(true);
+    setIsPaused(false);
     setActiveVideo(postId);
   };
 
-  const handleStop = () => { setIsActive(false); setActiveVideo(null); };
+  const handleStop = () => { setIsActive(false); setIsPaused(false); setActiveVideo(null); };
+
+  const togglePause = () => {
+    const v = videoRef.current;
+    if (!v) return;
+    if (v.paused) { v.play().catch(()=>{}); setIsPaused(false); }
+    else { v.pause(); setIsPaused(true); }
+  };
 
   return (
     <div ref={wrapRef} className="relative w-full bg-black overflow-hidden" style={{ minHeight: 380 }}>
       {!isActive && (
         <button onClick={handlePlay} className="relative block w-full text-left" style={{ height: 380 }}>
           {poster ? (
-            <img src={poster} alt="" className="absolute inset-0 h-full w-full object-cover" />
+            <img src={poster} alt="" loading="lazy" className="absolute inset-0 h-full w-full object-cover" />
           ) : (
-            <video src={`${videoSrc}#t=0.8`} muted playsInline preload="metadata" className="absolute inset-0 h-full w-full object-cover" />
+            <div className="absolute inset-0 flex items-center justify-center bg-gradient-to-br from-zinc-800 to-black">
+              <span className="text-6xl">🎬</span>
+            </div>
           )}
           <div className="absolute inset-0 flex items-center justify-center">
             <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#FF5A1F] shadow-xl ring-4 ring-white/20 active:scale-95">
@@ -141,16 +111,27 @@ function TikTokVideo({ src, authorName, posterUrl, postId }: { src: string; auth
 
       {isActive && (
         <div className="relative w-full">
+          {/* FIX: NO controls here - this was the 2nd white button. Only our custom button below. */}
           <video
             ref={videoRef}
             src={videoSrc}
             poster={poster || undefined}
             playsInline
             preload="auto"
-            controls
             autoPlay
+            onClick={togglePause}
+            onPause={() => setIsPaused(true)}
+            onPlay={() => setIsPaused(false)}
             className="w-full max-h-[520px] min-h-[380px] bg-black object-contain"
           />
+          {/* Single custom pause / play - tap video to pause, tap this to resume */}
+          {isPaused && (
+            <button onClick={togglePause} className="absolute inset-0 z-20 flex items-center justify-center bg-black/30">
+              <span className="flex h-16 w-16 items-center justify-center rounded-full bg-[#FF5A1F] shadow-xl ring-4 ring-white/20 active:scale-95">
+                <Play className="ml-1 h-8 w-8 fill-white text-white" />
+              </span>
+            </button>
+          )}
           <button onClick={handleStop} className="absolute top-2 right-2 z-30 bg-black/70 text-white text-[11px] px-3 py-1.5 rounded-full">✕ Stop</button>
         </div>
       )}
