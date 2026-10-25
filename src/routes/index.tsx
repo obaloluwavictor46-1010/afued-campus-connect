@@ -1,4 +1,4 @@
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
 import { ImagePlus, Loader2, MoreHorizontal, Pencil, Trash2, Share2, Music, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
@@ -23,6 +23,38 @@ export const Route = createFileRoute("/")({
   component: Feed,
 });
 
+const PAGE_SIZE = 10;
+
+// STEP 2 - Compress image before upload: 4MB -> ~300KB, still sharp
+async function compressImage(file: File): Promise<File> {
+  if (!file.type?.startsWith("image/")) return file;
+  if (file.type === "image/gif") return file;
+  if (file.size < 800 * 1024) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxW = 1200;
+    const scale = Math.min(1, maxW / bitmap.width);
+    const w = Math.round(bitmap.width * scale);
+    const h = Math.round(bitmap.height * scale);
+    const canvas = document.createElement("canvas");
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(bitmap, 0, 0, w, h);
+    const blob: Blob | null = await new Promise((res) => {
+      canvas.toBlob((b) => res(b), "image/webp", 0.8);
+    });
+    if (!blob) return file;
+    const newName = file.name.replace(/\.(jpg|jpeg|png|heic|heif)$/i, "") + ".webp";
+    const newFile = new File([blob], newName, { type: "image/webp" });
+    console.log(`COMPRESS: ${(file.size/1024/1024).toFixed(2)}MB -> ${(newFile.size/1024).toFixed(0)}KB`);
+    return newFile;
+  } catch (e) {
+    console.log("COMPRESS FAILED, use original:", e);
+    return file;
+  }
+}
+
 function checkVideoDuration(file: File): Promise<{ ok: boolean; dur: number }> {
   return new Promise((resolve) => {
     if (!file.type?.startsWith("video/")) { resolve({ ok: true, dur: 0 }); return; }
@@ -39,6 +71,7 @@ function Feed() { return <AppShell><FeedInner /></AppShell>; }
 
 function FeedInner() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [channel, setChannel] = useState("All");
   const [posts, setPosts] = useState<Post[]>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
@@ -54,6 +87,16 @@ function FeedInner() {
   const [repostBy, setRepostBy] = useState<Record<string, any[]>>({});
   const [repostingId, setRepostingId] = useState<string | null>(null);
   const [newCount, setNewCount] = useState(0);
+  // STEP 1 - Pagination state
+  const [page, setPage] = useState(0);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const loadMoreRef = useRef<HTMLDivElement>(null);
+  const pageRef = useRef(0);
+  const hasMoreRef = useRef(true);
+  const loadingMoreRef = useRef(false);
+  const channelRef = useRef(channel);
+  channelRef.current = channel;
 
   const loadReposts = async () => {
     const { data, error } = await supabase.from("reposts").select("post_id, user_id, created_at").order("created_at", { ascending: false });
@@ -111,25 +154,67 @@ function FeedInner() {
 
   // NO WATCHDOG HERE AGAIN - PostCard.tsx don handle pause. Watchdog dey fight am before.
 
-  const load = async () => {
-    let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).limit(50);
-    if (channel !== "All") q = q.eq("faculty_channel", channel);
+  const load = async (reset = true) => {
+    const targetPage = reset ? 0 : pageRef.current;
+    const from = targetPage * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    if (reset) setLoading(true);
+    let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).range(from, to);
+    if (channelRef.current !== "All") q = q.eq("faculty_channel", channelRef.current);
     const { data, error } = await q;
     if (error) toast.error(error.message);
     const list = (data ?? []) as Post[];
+    if (list.length < PAGE_SIZE) { setHasMore(false); hasMoreRef.current = false; } else { setHasMore(true); hasMoreRef.current = true; }
     setPosts(prev => {
       const uploading = prev.filter((p: any) => p.isUploading);
-      const merged = [...uploading, ...list];
-      return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+      if (reset) {
+        const merged = [...uploading, ...list];
+        return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+      } else {
+        const merged = [...prev, ...list];
+        return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+      }
     });
-    setProfiles(await fetchProfiles(list.map((p) => p.user_id)));
     if (list.length) {
+      setProfiles(prev => ({ ...prev, ...(await fetchProfiles(list.map((p) => p.user_id))) }));
       const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
       const m: Record<string, number> = {};
       (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
-      setCounts(m);
+      setCounts(prev => reset ? m : { ...prev, ...m });
     }
     setLoading(false);
+    setLoadingMore(false);
+    loadingMoreRef.current = false;
+  };
+
+  const loadMore = async () => {
+    if (loadingMoreRef.current || !hasMoreRef.current) return;
+    loadingMoreRef.current = true;
+    setLoadingMore(true);
+    const nextPage = pageRef.current + 1;
+    pageRef.current = nextPage;
+    setPage(nextPage);
+    const from = nextPage * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+    let q = supabase.from("posts").select("*").order("created_at", { ascending: false }).range(from, to);
+    if (channelRef.current !== "All") q = q.eq("faculty_channel", channelRef.current);
+    const { data, error } = await q;
+    if (error) { toast.error(error.message); setLoadingMore(false); loadingMoreRef.current = false; return; }
+    const list = (data ?? []) as Post[];
+    if (list.length < PAGE_SIZE) { setHasMore(false); hasMoreRef.current = false; }
+    setPosts(prev => {
+      const merged = [...prev, ...list];
+      return merged.filter((v, i, a) => a.findIndex(t => t.id === v.id) === i);
+    });
+    if (list.length) {
+      setProfiles(prev => ({ ...prev, ...(await fetchProfiles(list.map((p) => p.user_id))) }));
+      const { data: cs } = await supabase.from("comments").select("post_id").in("post_id", list.map((p) => p.id));
+      const m: Record<string, number> = {};
+      (cs ?? []).forEach((c) => (m[c.post_id] = (m[c.post_id] ?? 0) + 1));
+      setCounts(prev => ({ ...prev, ...m }));
+    }
+    setLoadingMore(false);
+    loadingMoreRef.current = false;
   };
 
   const handleDeleteEveryone = async (postId: string) => {
@@ -157,24 +242,50 @@ function FeedInner() {
     setOpenMenu(null);
   };
 
-  const showNewPosts = async () => { setNewCount(0); await load(); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const showNewPosts = async () => { setNewCount(0); pageRef.current = 0; setPage(0); await load(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
+
+  // PROFILE CLICK - press top of post (avatar/name area) -> go profile
+  const goToProfile = (postUserId: string, e: React.MouseEvent) => {
+    // If na own profile, go /profile (no id). If na another person, go /profile/$userId
+    if (postUserId === user?.id) {
+      navigate({ to: "/profile" } as any);
+      return;
+    }
+    // Try /profile/$userId - if your route na different, change this 1 line
+    try {
+      navigate({ to: "/profile/$userId", params: { userId: postUserId } } as any);
+    } catch {
+      window.location.href = `/profile/${postUserId}`;
+    }
+  };
 
   useEffect(() => {
-    setLoading(true); setNewCount(0); load(); loadReposts();
+    setLoading(true); setNewCount(0); pageRef.current = 0; setPage(0); setHasMore(true); hasMoreRef.current = true; load(true); loadReposts();
     const ch = supabase.channel(`feed-${channel}`)
       .on("postgres_changes", { event: "INSERT", schema: "public", table: "posts" }, (payload) => {
         const newPost: any = payload.new;
-        if (newPost.user_id === user?.id) { load(); return; }
+        if (newPost.user_id === user?.id) { load(true); return; }
         if (channel !== "All" && newPost.faculty_channel !== channel) return;
-        if (window.scrollY < 150) { load(); } else { setNewCount((c) => c + 1); }
+        if (window.scrollY < 150) { load(true); } else { setNewCount((c) => c + 1); }
       })
-      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "posts" }, load)
-      .on("postgres_changes", { event: "DELETE", schema: "public", table: "posts" }, load)
-      .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, load)
+      .on("postgres_changes", { event: "UPDATE", schema: "public", table: "posts" }, () => load(true))
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "posts" }, () => load(true))
+      .on("postgres_changes", { event: "*", schema: "public", table: "comments" }, () => load(true))
       .on("postgres_changes", { event: "*", schema: "public", table: "reposts" }, loadReposts)
       .subscribe();
     return () => { supabase.removeChannel(ch); };
   }, [channel]);
+
+  // STEP 1 - Auto load more when scroll reach bottom
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el) return;
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0].isIntersecting) loadMore();
+    }, { rootMargin: "400px" });
+    obs.observe(el);
+    return () => obs.disconnect();
+  }, []);
 
   useEffect(() => {
     const close = () => setOpenMenu(null);
@@ -202,7 +313,7 @@ function FeedInner() {
         </div>
       )}
       <div className="space-y-4 p-4">
-        <Composer defaultChannel={channel} onOptimisticAdd={(temp: any) => setPosts(prev => [temp, ...prev])} onOptimisticReplace={(tempId: string, real: any) => setPosts(prev => prev.map(p => p.id === tempId ? { ...p, ...real, isUploading: false } : p))} onOptimisticRemove={(tempId: string) => setPosts(prev => prev.filter(p => p.id !== tempId))} onPosted={load} />
+        <Composer defaultChannel={channel} onOptimisticAdd={(temp: any) => setPosts(prev => [temp, ...prev])} onOptimisticReplace={(tempId: string, real: any) => setPosts(prev => prev.map(p => p.id === tempId ? { ...p, ...real, isUploading: false } : p))} onOptimisticRemove={(tempId: string) => setPosts(prev => prev.filter(p => p.id !== tempId))} onPosted={() => load(true)} />
         {loading ? (
           <div className="flex justify-center py-10"><Loader2 className="h-6 w-6 animate-spin text-primary" /></div>
         ) : visiblePosts.length === 0 ? (
@@ -239,7 +350,20 @@ function FeedInner() {
                     {(repostCounts[p.id] || 0) > 1 && <span className="text-muted-foreground font-normal">• {repostCounts[p.id]} reposts</span>}
                   </div>
                 )}
-                <div>
+                <div
+                  onClick={(e) => {
+                    // PROFILE CLICK FIX: If you press top ~70px of post (where Vikky avatar/name dey) and no be the ... menu, go profile
+                    const target = e.target as HTMLElement;
+                    if (target.closest("button") || target.closest("video") || target.closest("a")) return;
+                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
+                    const y = e.clientY - rect.top;
+                    const x = e.clientX - rect.left;
+                    if (y < 70 && x < rect.width - 60) {
+                      goToProfile(p.user_id, e);
+                    }
+                  }}
+                  className="cursor-pointer"
+                >
                   <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
                 </div>
                 <div className="flex items-center gap-2 px-4 pb-3">
@@ -253,6 +377,18 @@ function FeedInner() {
               </div>
             );
           })
+        )}
+        {/* STEP 1 - Load More Trigger */}
+        {!loading && visiblePosts.length > 0 && (
+          <div ref={loadMoreRef} className="flex justify-center py-4">
+            {loadingMore ? (
+              <div className="flex items-center gap-2 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin" /> Loading more...</div>
+            ) : hasMore ? (
+              <button onClick={loadMore} className="rounded-full bg-muted px-6 py-2 text-sm font-bold text-muted-foreground">Load More Posts ↓</button>
+            ) : (
+              <p className="text-xs text-muted-foreground">You don reach end 🎉</p>
+            )}
+          </div>
         )}
       </div>
       <CommentsSheet postId={openPost} onClose={() => setOpenPost(null)} />
@@ -317,7 +453,17 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     const since = new Date(); since.setHours(0, 0, 0, 0);
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
-    const filesToUpload = editedFiles.length > 0 ? editedFiles : picker.files;
+    let filesToUpload: any[] = editedFiles.length > 0 ? [...editedFiles] : [...picker.files];
+    // STEP 2 - Compress images before upload (video/music no touch)
+    const compressed: any[] = [];
+    for (const f of filesToUpload) {
+      if ((f as any).type?.startsWith("image/")) {
+        compressed.push(await compressImage(f as File));
+      } else {
+        compressed.push(f);
+      }
+    }
+    filesToUpload = compressed;
     for (const f of filesToUpload) {
       if ((f as any).type?.startsWith("video/")) {
         const check = await checkVideoDuration(f as File);
@@ -560,4 +706,4 @@ function FeedWhatsAppEditor({ imageUrl, onCancel, onSend }: any) {
       </div>
     </div>
   );
-    }
+                              }
