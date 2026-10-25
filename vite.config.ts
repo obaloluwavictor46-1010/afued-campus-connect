@@ -7,12 +7,16 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-  // No custom server entry here.
-  // Let TanStack use its own native Vercel entry.
-  // Custom entry (server: { entry: "server" }) was causing
-  // Vercel 508 INFINITE_LOOP_DETECTED - two entries pointing to each other.
-  tanstackStart: {},
+  // SPA MODE - NO SERVER FUNCTION, NO LOOP
+  // This stops TanStack from creating a Vercel Server Function
+  // that was calling itself and triggering 508.
+  // App will be served as static files from dist/ - same UI, same Supabase.
+  tanstackStart: {
+    spa: {
+      enabled: true,
+    },
+  },
   nitro: {
-    preset: "vercel",
+    preset: "static",
   },
 });
