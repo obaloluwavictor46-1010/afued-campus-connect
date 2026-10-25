@@ -241,13 +241,13 @@ function FeedInner() {
 
   const showNewPosts = async () => { setNewCount(0); pageRef.current = 0; setPage(0); await load(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
-  // PROFILE CLICK - FIXED: use window.location, no TanStack navigate, no build crash
+  // PROFILE CLICK - FIXED: use ?userId= to match new profile.tsx, no TanStack navigate, no build crash
   const goToProfile = (postUserId: string) => {
     if (postUserId === user?.id) {
       window.location.href = `/profile`;
       return;
     }
-    window.location.href = `/profile/${postUserId}`;
+    window.location.href = `/profile?userId=${postUserId}`;
   };
 
   useEffect(() => {
@@ -341,20 +341,7 @@ function FeedInner() {
                     {(repostCounts[p.id] || 0) > 1 && <span className="text-muted-foreground font-normal">• {repostCounts[p.id]} reposts</span>}
                   </div>
                 )}
-                <div
-                  onClick={(e) => {
-                    // PROFILE CLICK FIX: If you press top ~70px of post (where Vikky avatar/name dey) and no be the ... menu, go profile
-                    const target = e.target as HTMLElement;
-                    if (target.closest("button") || target.closest("video") || target.closest("a")) return;
-                    const rect = (e.currentTarget as HTMLDivElement).getBoundingClientRect();
-                    const y = e.clientY - rect.top;
-                    const x = e.clientX - rect.left;
-                    if (y < 70 && x < rect.width - 60) {
-                      goToProfile(p.user_id);
-                    }
-                  }}
-                  className="cursor-pointer"
-                >
+                <div>
                   <PostCard post={p} author={profiles[p.user_id]} commentCount={counts[p.id] ?? 0} onComments={() => setOpenPost(p.id)} />
                 </div>
                 <div className="flex items-center gap-2 px-4 pb-3">
@@ -697,4 +684,4 @@ function FeedWhatsAppEditor({ imageUrl, onCancel, onSend }: any) {
       </div>
     </div>
   );
-}
+  }
