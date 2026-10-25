@@ -11,26 +11,26 @@ import { useAuth } from "@/lib/auth";
 
 export const Route = createFileRoute("/profile")({
   ssr: false,
-  validateSearch: (search: Record<string, unknown>) => ({
-    userId: (search.userId as string | undefined) || undefined,
-  }),
   head: () => ({ meta: [{ title: "Profile — AFUED Community" }] }),
   component: () => <AppShell title="Profile"><ProfilePage /></AppShell>,
 });
 
 function ProfilePage() {
   const { user, profile, refreshProfile } = useAuth();
-  const search = Route.useSearch();
   const navigate = useNavigate();
 
-  // FIX: If ?userId=... dey, show THAT person. If no userId, show MY OWN.
-  const viewedId = search.userId || user?.id || "";
+  // FIX: No validateSearch, no Route.useSearch. Use plain browser search - build no go crash.
+  const [viewedIdFromUrl, setViewedIdFromUrl] = useState<string | null>(null);
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    setViewedIdFromUrl(params.get("userId"));
+  }, []);
+
+  const viewedId = viewedIdFromUrl || user?.id || "";
   const isOwn = !!user?.id && viewedId === user.id;
 
-  // Viewed profile - if na own, use my profile from auth. If na another person, load am from DB.
   const [viewedProfile, setViewedProfile] = useState<Profile | null>(null);
   const [viewedLoading, setViewedLoading] = useState(false);
-
   const [posts, setPosts] = useState<Post[]>([]);
   const [counts, setCounts] = useState<Record<string, number>>({});
   const [editing, setEditing] = useState(false);
@@ -39,16 +39,12 @@ function ProfilePage() {
   const [followingCount, setFollowingCount] = useState(0);
   const [tab, setTab] = useState<"all" | "photos" | "reels" | "reposts">("all");
   const p: any = viewedProfile || profile;
-
   const [totalLikes, setTotalLikes] = useState(0);
   const [repostedPosts, setRepostedPosts] = useState<Post[]>([]);
   const [repostCount, setRepostCount] = useState(0);
-
-  // FOLLOW state for other person profile
   const [isFollowing, setIsFollowing] = useState(false);
   const [followBusy, setFollowBusy] = useState(false);
 
-  // Load viewed profile
   useEffect(() => {
     if (!viewedId) return;
     if (isOwn) {
@@ -60,7 +56,6 @@ function ProfilePage() {
       const profs = await fetchProfiles([viewedId]);
       setViewedProfile(profs[viewedId] || null);
       setViewedLoading(false);
-      // Check if I dey follow this person
       if (user?.id) {
         const { data } = await supabase.from("follows").select("id").eq("follower_id", user.id).eq("following_id", viewedId).maybeSingle();
         setIsFollowing(!!data);
@@ -197,7 +192,6 @@ function ProfilePage() {
 
   return (
     <div className="space-y-4 p-4">
-      {/* Back button when viewing another person */}
       {!isOwn && (
         <button onClick={() => navigate({ to: "/" })} className="flex items-center gap-1 text-sm font-semibold">
           <ArrowLeft className="h-4 w-4" /> Back to Feed
