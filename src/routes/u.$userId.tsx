@@ -60,7 +60,14 @@ function ProfileVideo({ src }: { src: string }) {
 }
 
 function FacebookProfile(){
-  const { userId } = Route.useParams()
+  // FIX: Comot Route.useParams() - na am dey kill Vercel build. Use window.location instead.
+  const [userId, setUserId] = useState<string>("")
+  useEffect(() => {
+    const parts = window.location.pathname.split("/").filter(Boolean)
+    // /u/123 -> last part na 123
+    setUserId(parts[parts.length - 1] || "")
+  }, [])
+
   const [me, setMe] = useState<any>(null)
   const [profile, setProfile] = useState<any>(null)
   const [posts, setPosts] = useState<any[]>([])
@@ -72,7 +79,6 @@ function FacebookProfile(){
   const [followBusy, setFollowBusy] = useState(false)
   const [showFullBio, setShowFullBio] = useState(false)
 
-  // === ADDED: REPOSTS ===
   const [repostedPosts, setRepostedPosts] = useState<any[]>([])
   const [repostCount, setRepostCount] = useState(0)
   const [myReposts, setMyReposts] = useState<Set<string>>(new Set())
@@ -80,12 +86,10 @@ function FacebookProfile(){
   const [repostingId, setRepostingId] = useState<string | null>(null)
 
   const loadReposts = async (currentUserId?: string) => {
-    // 1. Posts wey this profile person repost
     const { data: myRows } = await supabase.from('reposts').select('post_id, created_at').eq('user_id', userId).order('created_at', { ascending: false })
     if (myRows && myRows.length > 0) {
       const ids = myRows.map((r: any) => r.post_id)
       const { data: rePosts } = await supabase.from('posts').select('*').in('id', ids).order('created_at', { ascending: false })
-      // Keep repost order
       const ordered = ids.map(id => (rePosts || []).find((p: any) => p.id === id)).filter(Boolean)
       setRepostedPosts(ordered)
       setRepostCount(myRows.length)
@@ -93,8 +97,6 @@ function FacebookProfile(){
       setRepostedPosts([])
       setRepostCount(0)
     }
-
-    // 2. Repost counts for all posts shown + if ME don repost them
     const { data: allReposts } = await supabase.from('reposts').select('post_id, user_id')
     if (allReposts) {
       const counts: Record<string, number> = {}
@@ -119,7 +121,6 @@ function FacebookProfile(){
         if (error) throw error
         setMyReposts(prev => { const n = new Set(prev); n.delete(post.id); return n })
         setRepostCounts(prev => ({ ...prev, [post.id]: Math.max(0, (prev[post.id] || 1) - 1) }))
-        // If we dey Reposts tab and na my own profile, remove am from list
         if (me.id === userId) setRepostedPosts(prev => prev.filter(p => p.id !== post.id))
         if (me.id === userId) setRepostCount(c => Math.max(0, c - 1))
       } else {
@@ -136,6 +137,7 @@ function FacebookProfile(){
   }
 
   useEffect(()=>{
+    if (!userId) return
     let mounted = true
     async function run(){
       try{
@@ -156,7 +158,6 @@ function FacebookProfile(){
         if(mounted) setFollowers(followersCount||0)
         const {count:followingsCount} = await supabase.from('follows').select('*',{count:'exact', head:true}).eq('follower_id', userId)
         if(mounted) setFollowingCount(followingsCount||0)
-        // === ADDED: Load reposts ===
         await loadReposts(user?.id)
       }catch(e){
         console.log("Load error", e)
@@ -196,6 +197,10 @@ function FacebookProfile(){
     }
   }
 
+  if(!userId) {
+    return <div style={{padding:40, textAlign:'center', fontFamily:'sans-serif'}}>Loading profile...</div>
+  }
+
   if(loading) {
     return (
       <div style={{padding:40, textAlign:'center', fontFamily:'sans-serif'}}>
@@ -227,7 +232,6 @@ function FacebookProfile(){
     return { url: null, isVideo: false }
   }
 
-  // === ADDED: If tab na Reposts, show repostedPosts, else filter normal posts ===
   const listToShow = tab === 'Reposts' ? repostedPosts : posts
   const filteredPosts = listToShow.filter(p => {
     if(tab === 'All') return true
@@ -273,7 +277,7 @@ function FacebookProfile(){
           <div style={{display:'flex', gap:8, marginTop:14}}>
             {!isMe ? (
               <>
-                <Link to="/chat/$userId" params={{ userId: profile.id }} style={{flex:1, background:'#1877f2', color:'white', padding:'10px', borderRadius:6, textAlign:'center', textDecoration:'none', fontWeight:'600', fontSize:14, display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>💬 Message</Link>
+                <a href={`/chat/${profile.id}`} style={{flex:1, background:'#1877f2', color:'white', padding:'10px', borderRadius:6, textAlign:'center', textDecoration:'none', fontWeight:'600', fontSize:14, display:'flex', alignItems:'center', justifyContent:'center', gap:6}}>💬 Message</a>
                 <button onClick={toggleFollow} disabled={followBusy} style={{flex:1, background: isFollowing ? '#e4e6eb' : '#1877f2', color: isFollowing ? 'black' : 'white', border:'none', padding:'10px', borderRadius:6, fontWeight:'600', fontSize:14, cursor: followBusy ? 'wait' : 'pointer', opacity: followBusy ? 0.6 : 1}}>
                   {followBusy ? '...' : isFollowing ? '✓ Following' : '+ Follow'}
                 </button>
@@ -304,7 +308,6 @@ function FacebookProfile(){
           const isMyRepost = myReposts.has(p.id)
           return (
             <div key={p.id} style={{background:'white', marginTop:8, padding:12}}>
-              {/* === ADDED: Repost label like TikTok === */}
               {isRepostedPost && (
                 <div style={{ fontSize: 12, fontWeight: 700, color: '#0a7a42', marginBottom: 6, display: 'flex', alignItems: 'center', gap: 4 }}>
                   🔁 {profile.full_name} reposted this
@@ -321,12 +324,11 @@ function FacebookProfile(){
               <div style={{marginTop:8, fontSize:14, lineHeight:'19px', whiteSpace:'pre-wrap'}}>{p.content}</div>
               {media.url && !media.isVideo && <img src={media.url} style={{width:'100%', borderRadius:8, marginTop:10, maxHeight:400, objectFit:'cover'}} loading="lazy" alt=""/>}
               {media.url && media.isVideo && <ProfileVideo src={media.url} />}
-              {/* === ADDED: Repost button for profile posts === */}
               <div style={{ display: 'flex', gap: 8, marginTop: 10 }}>
                 <button onClick={() => handleRepost(p)} disabled={repostingId === p.id} style={{ background: isMyRepost ? '#d1f4e0' : '#f0f2f5', color: isMyRepost ? '#0a7a42' : '#65676b', border: 'none', padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, cursor: 'pointer' }}>
                   🔁 {repostingId === p.id ? 'Wait...' : isMyRepost ? 'Reposted' : 'Repost'} • {repostCounts[p.id] || 0}
                 </button>
-                <Link to="/post/$postId" params={{ postId: p.id }} style={{ background: '#f0f2f5', color: '#65676b', padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>💬 View Post</Link>
+                <a href={`/post/${p.id}`} style={{ background: '#f0f2f5', color: '#65676b', padding: '7px 14px', borderRadius: 20, fontSize: 12, fontWeight: 700, textDecoration: 'none' }}>💬 View Post</a>
               </div>
             </div>
           )
@@ -335,4 +337,4 @@ function FacebookProfile(){
       </div>
     </div>
   )
-}
+    }
