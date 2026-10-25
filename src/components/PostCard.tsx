@@ -201,7 +201,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
   const [deleting, setDeleting] = useState(false);
   const [isDeleted, setIsDeleted] = useState(false);
 
-  // FIX: Press Vikky avatar/name -> go her profile
+  // FIX: Press Vikky avatar/name -> go her profile with ?userId=
   const goToProfile = (e: React.MouseEvent) => {
     e.stopPropagation();
     const targetId = postOwnerId;
@@ -210,7 +210,7 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       window.location.href = `/profile`;
       return;
     }
-    window.location.href = `/profile/${targetId}`;
+    window.location.href = `/profile?userId=${targetId}`;
   };
 
   const openMenu = (e: React.MouseEvent) => {
@@ -588,4 +588,4 @@ export function PostCard({ post, author, commentCount, onComments, onDeleted }: 
       </div>
     </article>
   );
-      }
+}
