@@ -7,11 +7,11 @@
 import { defineConfig } from "@lovable.dev/vite-tanstack-config";
 
 export default defineConfig({
-  tanstackStart: {
-    // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
-    // nitro/vite builds from this
-    server: { entry: "server" },
-  },
+  // No custom server entry here.
+  // Let TanStack use its own native Vercel entry.
+  // Custom entry (server: { entry: "server" }) was causing
+  // Vercel 508 INFINITE_LOOP_DETECTED - two entries pointing to each other.
+  tanstackStart: {},
   nitro: {
     preset: "vercel",
   },
