@@ -1,3 +1,7 @@
 {
-  "buildCommand": "bun run build || true"
+  "buildCommand": "bun run build || true",
+  "outputDirectory": ".vercel/output/static",
+  "framework": null,
+  "cleanUrls": true,
+  "rewrites": [{ "source": "/((?!.*\\..*).*)", "destination": "/index.html" }]
 }
