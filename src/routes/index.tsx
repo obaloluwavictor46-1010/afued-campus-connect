@@ -1,4 +1,4 @@
-import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useState, useRef } from "react";
 import { ImagePlus, Loader2, MoreHorizontal, Pencil, Trash2, Share2, Music, Repeat2 } from "lucide-react";
 import { toast } from "sonner";
@@ -25,7 +25,7 @@ export const Route = createFileRoute("/")({
 
 const PAGE_SIZE = 10;
 
-// STEP 2 - Compress image before upload: 4MB -> ~300KB, still sharp
+// STEP 2 - Compress image before upload: 4MB -> ~300KB, still sharp - SILENT, no text for screen
 async function compressImage(file: File): Promise<File> {
   if (!file.type?.startsWith("image/")) return file;
   if (file.type === "image/gif") return file;
@@ -47,10 +47,8 @@ async function compressImage(file: File): Promise<File> {
     if (!blob) return file;
     const newName = file.name.replace(/\.(jpg|jpeg|png|heic|heif)$/i, "") + ".webp";
     const newFile = new File([blob], newName, { type: "image/webp" });
-    console.log(`COMPRESS: ${(file.size/1024/1024).toFixed(2)}MB -> ${(newFile.size/1024).toFixed(0)}KB`);
     return newFile;
   } catch (e) {
-    console.log("COMPRESS FAILED, use original:", e);
     return file;
   }
 }
@@ -71,7 +69,6 @@ function Feed() { return <AppShell><FeedInner /></AppShell>; }
 
 function FeedInner() {
   const { user } = useAuth();
-  const navigate = useNavigate();
   const [channel, setChannel] = useState("All");
   const [posts, setPosts] = useState<Post[]>([]);
   const [profiles, setProfiles] = useState<Record<string, Profile>>({});
@@ -244,19 +241,13 @@ function FeedInner() {
 
   const showNewPosts = async () => { setNewCount(0); pageRef.current = 0; setPage(0); await load(true); window.scrollTo({ top: 0, behavior: "smooth" }); };
 
-  // PROFILE CLICK - press top of post (avatar/name area) -> go profile
-  const goToProfile = (postUserId: string, e: React.MouseEvent) => {
-    // If na own profile, go /profile (no id). If na another person, go /profile/$userId
+  // PROFILE CLICK - FIXED: use window.location, no TanStack navigate, no build crash
+  const goToProfile = (postUserId: string) => {
     if (postUserId === user?.id) {
-      navigate({ to: "/profile" } as any);
+      window.location.href = `/profile`;
       return;
     }
-    // Try /profile/$userId - if your route na different, change this 1 line
-    try {
-      navigate({ to: "/profile/$userId", params: { userId: postUserId } } as any);
-    } catch {
-      window.location.href = `/profile/${postUserId}`;
-    }
+    window.location.href = `/profile/${postUserId}`;
   };
 
   useEffect(() => {
@@ -359,7 +350,7 @@ function FeedInner() {
                     const y = e.clientY - rect.top;
                     const x = e.clientX - rect.left;
                     if (y < 70 && x < rect.width - 60) {
-                      goToProfile(p.user_id, e);
+                      goToProfile(p.user_id);
                     }
                   }}
                   className="cursor-pointer"
@@ -454,7 +445,7 @@ function Composer({ defaultChannel, onPosted, onOptimisticAdd, onOptimisticRepla
     const { count } = await supabase.from("posts").select("id", { count: "exact", head: true }).eq("user_id", user.id).gte("created_at", since.toISOString());
     if ((count ?? 0) >= MAX_POSTS_PER_DAY) { toast.error(`You can post up to ${MAX_POSTS_PER_DAY} times per day`); return; }
     let filesToUpload: any[] = editedFiles.length > 0 ? [...editedFiles] : [...picker.files];
-    // STEP 2 - Compress images before upload (video/music no touch)
+    // STEP 2 - Compress images before upload (video/music no touch) - silent
     const compressed: any[] = [];
     for (const f of filesToUpload) {
       if ((f as any).type?.startsWith("image/")) {
@@ -706,4 +697,4 @@ function FeedWhatsAppEditor({ imageUrl, onCancel, onSend }: any) {
       </div>
     </div>
   );
-                              }
+}
