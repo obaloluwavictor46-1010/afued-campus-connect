@@ -25,7 +25,6 @@ export const Route = createFileRoute("/")({
 
 const PAGE_SIZE = 10;
 
-// STEP 2 - Compress image before upload: 4MB -> ~300KB, still sharp - SILENT, no text for screen
 async function compressImage(file: File): Promise<File> {
   if (!file.type?.startsWith("image/")) return file;
   if (file.type === "image/gif") return file;
