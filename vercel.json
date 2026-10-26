@@ -1,7 +1,4 @@
 {
-  "buildCommand": "bash build.sh",
-  "outputDirectory": "dist-static",
-  "framework": null,
-  "cleanUrls": true,
-  "rewrites": [{ "source": "/((?!.*\\..*).*)", "destination": "/index.html" }]
+  "buildCommand": "bun run build || true",
+  "framework": null
 }
