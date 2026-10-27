@@ -6,7 +6,7 @@ import { toast } from "sonner"
 export const MAX_IMAGES = 4
 export const MAX_MEDIA = 15
 
-export function checkSize(f: File, maxVideoMB = 500) {
+export function checkSize(f: File, maxVideoMB = 50) {
   const max = f.type.startsWith("video/") ? maxVideoMB * 1024 * 1024 : 5 * 1024 * 1024
   if (f.size > max) throw new Error(f.type.startsWith("video/") ? `Video too big (max ${maxVideoMB}MB)` : "Image too big (max 5MB)")
 }
@@ -20,17 +20,21 @@ export function fileNameFromUrl(url: string) {
 }
 
 export type MediaKind = "image" | "video" | "audio" | "file"
+
+// --- FIXED: Now sabi Bunny, iframe, m3u8, HLS ---
 export function kindOfUrl(url: string): MediaKind {
   if (!url) return "file"
-  // FIX: Remove ?token=... & #t=... before checking extension
   const clean = url.split("?")[0].split("#")[0].toLowerCase()
+  if (clean.includes("iframe.mediadelivery.net")) return "video"
+  if (clean.includes("playlist.m3u8")) return "video"
+  if (clean.includes(".m3u8")) return "video"
   if (clean.match(/\.(mp4|mov|webm|avi|mkv|m4v)$/)) return "video"
   if (clean.match(/\.(mp3|wav|m4a|ogg|aac)$/)) return "audio"
   if (clean.match(/\.(jpg|jpeg|png|gif|webp|heic|heif)$/)) return "image"
-  // FIX: Bunny Storage video wey no get extension but get /videos/ for path
   if (url.includes("/videos/")) return "video"
   if (url.includes("/music/")) return "audio"
   if (url.includes("/images/")) return "image"
+  if (url.includes("bunny") || url.includes("mediadelivery")) return "video"
   return "file"
 }
 
@@ -53,11 +57,54 @@ export function DownloadBtn({ url, name, className }: { url: string, name?: stri
   )
 }
 
-// === VIDEO WEY SHOW FACE QUICK, NO MORE BLACK - Direct MP4 ===
+// === FIXED VIDEO: Sabi MP4, HLS, and Bunny Iframe - No More Black ===
 function SmartVideo({ url, className }: { url: string, className?: string }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [showPlay, setShowPlay] = useState(true)
   const [poster, setPoster] = useState<string | undefined>(undefined)
+  const isIframe = url.includes("iframe.mediadelivery.net")
+  const isHls = url.includes(".m3u8") || url.includes("playlist.m3u8")
+
+  // HLS support for Android Chrome wey no sabi play m3u8 alone
+  useEffect(() => {
+    const v = videoRef.current
+    if (!v || !isHls || isIframe) return
+    if (v.canPlayType("application/vnd.apple.mpegurl")) {
+      v.src = url
+      return
+    }
+    // Load hls.js from CDN
+    const existing = document.querySelector('script[src*="hls.js"]')
+    const initHls = () => {
+      // @ts-ignore
+      const Hls = (window as any).Hls
+      if (Hls && Hls.isSupported()) {
+        const hls = new Hls()
+        hls.loadSource(url)
+        hls.attachMedia(v)
+      }
+    }
+    if (existing) { initHls(); return }
+    const script = document.createElement("script")
+    script.src = "https://cdn.jsdelivr.net/npm/hls.js@latest"
+    script.onload = initHls
+    document.head.appendChild(script)
+  }, [url, isHls, isIframe])
+
+  // If na Bunny iframe link, use iframe, no use <video> - e go play sharp
+  if (isIframe) {
+    return (
+      <div className="relative w-full bg-black rounded overflow-hidden aspect-video">
+        <iframe
+          src={url}
+          className="w-full h-full"
+          allow="autoplay; fullscreen"
+          allowFullScreen
+          style={{ border: 0 }}
+        />
+      </div>
+    )
+  }
 
   const makePoster = () => {
     const v = videoRef.current
@@ -93,7 +140,7 @@ function SmartVideo({ url, className }: { url: string, className?: string }) {
     <div className="relative w-full bg-black rounded overflow-hidden">
       <video
         ref={videoRef}
-        src={url.includes("#t=") ? url : `${url}#t=0.8`}
+        src={!isHls ? (url.includes("#t=") ? url : `${url}#t=0.8`) : undefined}
         poster={poster}
         controls
         playsInline
@@ -136,7 +183,6 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
   useEffect(() => {
     const wrap = wrapRef.current
     if (!wrap) return
-
     const observer = new IntersectionObserver(
       ([entry]) => {
         const video = videoRef.current
@@ -150,7 +196,6 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
       },
       { threshold: 0, rootMargin: "0px 0px -50px 0px" }
     )
-
     observer.observe(wrap)
     return () => observer.disconnect()
   }, [k, url])
@@ -161,7 +206,6 @@ export function MediaView({ url, kind, name, className }: { url: string, kind?: 
       {k === "image" && <img src={url} alt={name || "media"} className="w-full h-auto rounded" loading="lazy" />}
       {k === "video" && <SmartVideo url={url} />}
       {k === "audio" && <audio src={url} controls preload="metadata" className="w-full" />}
-      {k !== "audio" && <DownloadBtn url={url} name={name} className="absolute top-2 right-2 bg-black/60 text-white z-10" />}
     </div>
   )
 }
@@ -230,7 +274,7 @@ function Thumb({ file, onRemove }: { file: File, onRemove?: () => void }) {
   )
 }
 
-export function useMediaPicker(maxVideoMB = 500) {
+export function useMediaPicker(maxVideoMB = 50) {
   const [files, setFiles] = useState<File[]>([])
   const inputRef = useRef<HTMLInputElement>(null)
   const add = async (list: FileList | null) => {
@@ -255,4 +299,4 @@ export function useMediaPicker(maxVideoMB = 500) {
   const grid = (disabled?: boolean) => files.length ? (<div className="mt-3"><div className="grid grid-cols-4 gap-2">{files.map((f, n) => <Thumb key={n + f.name} file={f} onRemove={() => setFiles((c) => c.filter((_, i) => i !== n))} />)}{!disabled && files.length < MAX_MEDIA && (<button type="button" onClick={open} className="flex aspect-square items-center justify-center rounded border border-dashed"><Plus className="h-6 w-6" /></button>)}</div><p className="mt-1 text-xs text-muted-foreground">{files.length}/{MAX_MEDIA} files</p></div>) : null
   const clear = () => setFiles([])
   return { files, setFiles, open, input, grid, clear }
-    }
+}
